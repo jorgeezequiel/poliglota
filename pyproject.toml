@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poliglota"
+version = "0.1.0"
+description = "Localization toolkit: ARB validation/sync with a framework-agnostic core"
+authors = [{ name = "Jorge Ezequiel de Lima Santos" }]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+poliglota = "poliglota.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff",
+]
+
+[tool.setuptools]
+packages = ["poliglota", "poliglota.core", "poliglota.formats"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "CPY001",
+    "FBT001",
+    "FBT002",
+    "TD002",
+    "TD003",
+    "FIX002",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The CLI's stdout output is its user interface, not debug logging.
+"poliglota/cli.py" = ["T201"]
+# Test modules are intentionally not a package (pytest imports them by path).
+"tests/**/*.py" = [
+    "S101",
+    "ARG",
+    "PLR2004",
+    "SLF001",
+    "D",
+    "INP001",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

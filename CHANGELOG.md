@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project aims to follow [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+
+- `LICENSE`: the project's original code is now released under the MIT License
+  (Copyright (c) 2026 Jorge Ezequiel de Lima Santos).
+- `docs/third-party-resources.md`: explains that translation models, weights,
+  tokenizers, vocabularies and language packages are third-party resources with
+  their own licenses, not covered by Poliglota's MIT License.
+- `poliglota/core/`: format- and engine-agnostic contracts — `Locale`,
+  `TranslationRequest`, `TranslationResult`, `TranslationIssue`,
+  `TranslationEngine` protocol, `FormatAdapter` protocol and the
+  `LocalizedResource` / `LocalizedDocument` models.
+- `poliglota/formats/arb.py`: `ARBFormatAdapter` implementing the
+  `FormatAdapter` contract (discovery, read, write).
+- `tests/test_core_contracts.py` and `tests/test_formats_arb_adapter.py`,
+  including a guard that fails if `poliglota/core/` imports format adapters.
+- `docs/` (architecture, supported formats, ARB workflow, testing),
+  `CHANGELOG.md`, `CONTRIBUTING.md` and `SECURITY.md`.
+- `pyproject.toml`: a `dev` optional-dependency extra declaring the development
+  tools (`pytest`, `ruff`), installable with `pip install -e ".[dev]"`.
+
+### Changed
+
+- ARB implementation moved from the top-level modules into
+  `poliglota/formats/arb.py`. Behavior and CLI syntax are unchanged.
+- `poliglota/{arb_reader,models,validator,syncer}.py` are now compatibility
+  shims re-exporting from `poliglota/formats/arb.py`.
+- `pyproject.toml` `packages` now lists `poliglota`, `poliglota.core` and
+  `poliglota.formats`.
+- `.gitignore`: removed the blanket `*.bin` ignore (generic extensions may be
+  legitimate project files) while keeping model directories and model-only
+  extensions ignored; also ignores the internal phase report files and local
+  tool directories (`.codegraph/`, `.omo/`).
+- `pyproject.toml`: build requirement raised to `setuptools>=77`; license
+  metadata expressed as an SPDX expression (`license = "MIT"` together with
+  `license-files`, PEP 639); project authors declared; supported Python range
+  stated explicitly (`requires-python = ">=3.11"`).
+- Code-quality pass: the repository now passes `ruff check` and
+  `ruff format --check` with zero findings. Findings were fixed without
+  functional changes (import organization, `TYPE_CHECKING`-only and absolute
+  imports, docstring conventions, `pathlib`, `str.removesuffix`). Rules that
+  do not apply are scoped narrowly in `pyproject.toml` (`T201` for the CLI
+  entry point; test-specific rules under `tests/`), and the remaining inline
+  suppression (`TRY004` in `poliglota/formats/arb.py`) carries a written
+  justification and preserves the existing exception type.
+- `poliglota/core/translation.py`: `IssueSeverity` is now a `StrEnum`; the
+  user-visible issue formatting is unchanged.
+- `docs/development/testing.md`: the linting section no longer describes the
+  checks as work in progress; it now reflects that both Ruff commands pass in
+  the reference environment.
+
+### Fixed
+
+- `poliglota sync` with a source locale that does not exist now prints a
+  clear error message and exits with code 1, instead of an unhandled
+  `ValueError` traceback; no ARB file is modified, and a regression test
+  covers the behavior (`tests/test_poliglota.py`).
+
+### Notes
+
+- No translation engine is implemented yet. Engine selection is pending
+  explicit approval.
