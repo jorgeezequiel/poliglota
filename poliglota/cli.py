@@ -1,4 +1,4 @@
-"""Command-line interface for the Poliglota ARB commands."""
+"""Command-line interface for the Poliglota localization commands."""
 
 from __future__ import annotations
 
@@ -7,14 +7,29 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
-from .formats.arb import discover_arb_files, sync_locale_files, validate_root
+from .formats.arb import ARBFormatAdapter
+from .formats.registry import FormatRegistry
+from .formats.operations import discover_resources, validate_with_adapter, sync_with_adapter
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
+# Global registry: initialized with available adapters
+_registry: FormatRegistry | None = None
+
+
+def _get_registry() -> FormatRegistry:
+    """Get or initialize the global format registry."""
+    global _registry
+    if _registry is None:
+        _registry = FormatRegistry()
+        _registry.register(ARBFormatAdapter())
+    return _registry
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Poliglota: validate and sync ARB locale files.")
+    parser = argparse.ArgumentParser(description="Poliglota: validate and sync localization files.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     validate_parser = subparsers.add_parser("validate", help="validate locale files")
@@ -23,6 +38,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     validate_parser.add_argument(
         "--source", default=DEFAULT_SOURCE_LOCALE, help="source locale to use as reference"
+    )
+    validate_parser.add_argument(
+        "--format", default="arb", help="localization format (default: arb)"
     )
 
     sync_parser = subparsers.add_parser(
@@ -35,32 +53,57 @@ def _build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="show what would change without writing files"
     )
+    sync_parser.add_argument(
+        "--format", default="arb", help="localization format (default: arb)"
+    )
 
     list_parser = subparsers.add_parser("list-locales", help="list locale files discovered")
     list_parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="project root to scan")
+    list_parser.add_argument(
+        "--format", default="arb", help="localization format (default: arb)"
+    )
 
     return parser
 
 
-def _run_validate(root: Path, source_locale: str) -> int:
-    issues = validate_root(root, source_locale)
+def _run_validate(root: Path, source_locale: str, format_name: str) -> int:
+    registry = _get_registry()
+    try:
+        adapter = registry.get(format_name)
+    except KeyError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    try:
+        issues = validate_with_adapter(adapter, root, source_locale)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
     if issues:
         print("Validation issues found:")
         for issue in issues:
             print(f"- {issue}")
+        return 1
     else:
         print(f"No validation issues found for source locale '{source_locale}'.")
     return 0
 
 
-def _run_sync(root: Path, source_locale: str, dry_run: bool) -> int:
-    files = discover_arb_files(root)
-    if not files:
-        print(f"No ARB files found under {root}.")
+def _run_sync(root: Path, source_locale: str, dry_run: bool, format_name: str) -> int:
+    registry = _get_registry()
+    try:
+        adapter = registry.get(format_name)
+    except KeyError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    by_locale = discover_resources(adapter, root)
+    if not by_locale:
+        print(f"No {format_name.upper()} files found under {root}.")
         return 0
 
     try:
-        changed = sync_locale_files(root, source_locale, dry_run=dry_run)
+        changed = sync_with_adapter(adapter, root, source_locale, dry_run=dry_run)
     except ValueError as exc:
         print(str(exc))
         return 1
@@ -71,9 +114,16 @@ def _run_sync(root: Path, source_locale: str, dry_run: bool) -> int:
     return 0
 
 
-def _run_list_locales(root: Path) -> int:
-    files = discover_arb_files(root)
-    locales = sorted({arb_file.locale for arb_file in files})
+def _run_list_locales(root: Path, format_name: str) -> int:
+    registry = _get_registry()
+    try:
+        adapter = registry.get(format_name)
+    except KeyError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    by_locale = discover_resources(adapter, root)
+    locales = sorted(by_locale.keys())
     if not locales:
         print(f"No locale files found under {root}.")
         return 0
@@ -90,11 +140,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "validate":
-        return _run_validate(args.root, args.source)
+        return _run_validate(args.root, args.source, args.format)
     if args.command == "sync":
-        return _run_sync(args.root, args.source, args.dry_run)
+        return _run_sync(args.root, args.source, args.dry_run, args.format)
     if args.command == "list-locales":
-        return _run_list_locales(args.root)
+        return _run_list_locales(args.root, args.format)
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

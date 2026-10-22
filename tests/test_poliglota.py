@@ -89,7 +89,7 @@ def test_main_validate_command_runs(tmp_path: Path, capsys: pytest.CaptureFixtur
     exit_code = main(["validate", "--root", str(tmp_path), "--source", "pt_BR"])
     captured = capsys.readouterr()
 
-    assert exit_code == 0
+    assert exit_code == 1
     assert "placeholder mismatch" in captured.out or "missing keys" in captured.out
 
 

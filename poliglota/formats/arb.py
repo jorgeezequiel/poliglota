@@ -59,8 +59,12 @@ def discover_arb_files(root: str | Path) -> list[ArbFile]:
 def load_arb(path: str | Path) -> dict[str, Any]:
     """Load an ARB file and ensure it contains a JSON object."""
     file_path = Path(path)
-    with file_path.open("r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with file_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as exc:
+        msg = f"ARB file {file_path} contains invalid JSON: {exc.msg} (line {exc.lineno}, col {exc.colno})"
+        raise ValueError(msg) from exc
     if not isinstance(data, dict):
         msg = f"ARB file {file_path} must contain a JSON object"
         raise ValueError(msg)  # noqa: TRY004 - parsed-content check, not an argument type
