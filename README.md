@@ -124,7 +124,35 @@ guard that enforces them.
 - `docs/architecture/overview.md` — project layers and contracts.
 - `docs/supported-formats.md` — what is implemented per format.
 - `docs/guides/arb-workflow.md` — the ARB commands with real output.
+- `docs/guides/translation-engine.md` — Marian offline engine overview and usage.
 - `docs/development/testing.md` — how to run tests and lint.
+
+## Translation Models
+
+Poliglota uses **Opus-MT** (Helsinki-NLP) for offline neural translation when the `--engine marian` option is invoked.
+
+**Model Attribution (CC-BY-4.0)**:
+- Models: [Helsinki-NLP/Opus-MT](https://huggingface.co/Helsinki-NLP) by Language Technology Research Group, University of Helsinki
+- License: [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)
+- Citation: Tiedemann & Thottingal (2020), "Opus-MT – Building open translation services for the World"
+- Weights & Models: Available on [Hugging Face](https://huggingface.co/Helsinki-NLP)
+
+**Installation**:
+To use neural translation, install optional ML dependencies:
+```bash
+pip install poliglota[ml]
+```
+Or manually:
+```bash
+pip install torch>=2.0 transformers>=4.35 huggingface_hub>=0.20
+```
+
+**Usage**:
+```bash
+poliglota translate --source en_US --target pt_BR --text "Hello, World!"
+```
+
+See [Translation Engine Guide](docs/guides/translation-engine.md) for detailed setup and examples.
 
 ## Development
 
