@@ -28,12 +28,23 @@ def discover_resources(adapter: FormatAdapter, root: str | Path) -> dict[str, li
 
 
 def validate_with_adapter(
-    adapter: FormatAdapter, root: str | Path, source_locale: str
+    adapter: FormatAdapter,
+    root: str | Path,
+    source_locale: str,
+    check_keys: bool = True,
+    check_placeholders: bool = True,
 ) -> list[str]:
     """Validate target locale files against a source locale using the given adapter.
     
     Returns a list of human-readable issues (missing keys and placeholder mismatches).
     An empty list means validation passed.
+    
+    Args:
+        adapter: FormatAdapter instance.
+        root: Project root directory.
+        source_locale: Source locale code.
+        check_keys: Enable key consistency validation (default: True).
+        check_placeholders: Enable placeholder consistency validation (default: True).
     """
     root_path = Path(root)
     by_locale = discover_resources(adapter, root_path)
@@ -61,19 +72,21 @@ def validate_with_adapter(
                 target_doc = adapter.read(target_resource.path)
                 
                 # Check for missing keys
-                source_keys = set(source_doc.entries.keys())
-                target_keys = set(target_doc.entries.keys())
-                missing = sorted(source_keys - target_keys)
-                
-                if missing:
-                    issues.append(
-                        f"{locale}:{target_resource.path.name} missing keys -> {', '.join(missing)}"
-                    )
+                if check_keys:
+                    source_keys = set(source_doc.entries.keys())
+                    target_keys = set(target_doc.entries.keys())
+                    missing = sorted(source_keys - target_keys)
+                    
+                    if missing:
+                        issues.append(
+                            f"{locale}:{target_resource.path.name} missing keys -> {', '.join(missing)}"
+                        )
                 
                 # Check for placeholder mismatches using format-specific validation
-                _validate_placeholders_for_adapter(
-                    adapter, source_doc, target_doc, locale, target_resource, issues
-                )
+                if check_placeholders:
+                    _validate_placeholders_for_adapter(
+                        adapter, source_doc, target_doc, locale, target_resource, issues
+                    )
     
     return issues
 
