@@ -68,10 +68,7 @@ Thumbs.db
 # Cache de testes Python
 /.pytest_cache/
 
-# Relatórios internos das auditorias iniciais
-/PHASE_1_PLANNING_REPORT.md
-/PHASE_2_AUDIT_REPORT.md
-/PHASE_2_COMPARATIVE_REPORT.md
+# Relatórios internos consolidados em reports/ (ver linha 144)
 
 
 # ----------------------------
