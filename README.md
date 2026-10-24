@@ -1,175 +1,140 @@
 # Poliglota
 
-**Offline translation toolkit for developers.**
+Poliglota is a reusable Python toolkit for validating, synchronizing, and translating textual resources in software localization workflows.
 
-Poliglota is an open-source Python project designed to help developers translate text and localization resources into multiple languages using locally available translation engines.
+It is designed to help teams work with locale files and translation data without embedding file-format logic into the core domain model. The project targets the general problem of keeping translated resources consistent across locales while reducing manual work in repetitive localization tasks and avoiding unnecessary dependence on external translation services for simple, local workflows.
 
-Its long-term goal is to make translation workflows more accessible, reduce dependence on online translation services, and help developers save time and AI tokens when working with multilingual applications.
+This repository is not restricted to Flutter or ARB. ARB is an important and well-supported workflow, but the implementation is structured around a generic localization core and a registry of adapters for multiple resource formats.
 
-Poliglota is intended to be a practical translation aid, not a replacement for professional human translation or review.
+## Why this project exists
 
-> **Project status:** Early development. Current capabilities, supported formats, and offline translation engines must be verified against the implemented code. Features described as planned are not necessarily available yet.
+Localization and translation work often involve the same patterns across many codebases:
 
-## Goals
+- validating missing keys across locale variants
+- checking placeholder consistency between source and target resources
+- synchronizing a base locale into other locales
+- translating text locally when an offline or on-premise workflow is preferred
+- reducing repeated manual edits in multilingual software projects
 
-- Translate text into multiple languages using offline translation engines.
-- Reduce reliance on online APIs and services with usage limits or per-request costs.
-- Help developers automate repetitive translation tasks.
-- Support different application frameworks and localization formats through extensible adapters.
-- Validate localization resources and identify missing keys or inconsistent placeholders.
-- Keep translation workflows reproducible and easy to integrate into development environments.
+Poliglota addresses that by keeping validation, synchronization, and translation logic separate from the concrete format being processed. The goal is to reduce rework and to make the tooling adaptable as resource formats evolve.
 
-## How it is intended to work
-
-Poliglota aims to download or configure supported translation libraries and language resources so that translation can run locally after the required components have been installed.
-
-A typical workflow is expected to include:
-
-1. Install Poliglota and select a supported translation engine.
-2. Download the required language resources while an internet connection is available.
-3. Translate text or localization files locally.
-4. Review the generated translations and resolve any warnings.
-5. Validate the resulting localization resources before using them in an application.
-
-**Offline requirements:** Initial downloads may require an internet connection. Offline operation depends on the selected engine, its installed dependencies, and the availability of the required language resources. Poliglota does not imply that every language pair is supported offline.
-
-## Current functionality
-
-The implemented scope is a Python command-line interface for Flutter ARB
-localization files, backed by a format-agnostic core and an ARB format adapter.
-
-Implemented and tested:
-
-- Locale and localization key discovery in a project tree.
-- Validation of localization keys and placeholder consistency.
-- Comparison of target locales against a source locale.
-- Synchronization of missing keys, with dry-run and write modes.
-- A format-agnostic core (`poliglota.core`) for locales, translation
-  request/result data and the `FormatAdapter` / `TranslationEngine` contracts.
-- An ARB format adapter (`poliglota.formats.arb`).
-
-The offline translation engine and additional localization formats are **not
-implemented yet**. See `docs/supported-formats.md` and
-`docs/architecture/overview.md` for details.
+This project does not claim to guarantee cost savings or token savings in measured production terms. It is a practical localization helper whose value depends on the project context, the selected engine, the availability of model assets, and the quality of the reviewed output.
 
 ## Quick start
 
-Poliglota requires Python 3.11 or newer; the reference environment for the
-latest validation is **Python 3.13.11 on Windows** (see
-[`docs/development/testing.md`](docs/development/testing.md)).
-
-Create a virtual environment first (Windows example, selecting the interpreter
-explicitly with the `py` launcher):
-
-```powershell
-py -3.13 -m venv .venv
-.venv\Scripts\Activate.ps1
-```
-
-From the project directory, install Poliglota in editable mode (this requires
-access to PyPI unless the declared build requirements are already available
-locally; see the offline variant in
-[`docs/development/testing.md`](docs/development/testing.md)):
+### Basic install
 
 ```bash
 python -m pip install -e .
 ```
 
-Display the available commands:
+The base install exposes the CLI entrypoint:
 
 ```bash
-poliglota --help
+poliglota
 ```
 
-For the current ARB workflow, the commands are:
+### Local translation engine install
+
+The repository declares the optional dependencies in `pyproject.toml`:
 
 ```bash
-poliglota validate --root .
-poliglota sync --root . --source pt_BR --dry-run
-poliglota list-locales --root .
+python -m pip install -e ".[gpu]"
 ```
 
-These commands operate on the ARB files found under the given root. Use
-`poliglota --help` for the supported arguments, and see
-[`docs/guides/arb-workflow.md`](docs/guides/arb-workflow.md) for verified
-example output.
+The `gpu` extra installs the ML stack used by the local translation engine flow:
 
-## Translation quality and limitations
+- `torch>=2.7.0`
+- `transformers>=5.20.0`
+- `huggingface-hub>=0.20.0`
 
-Machine translation can contain incorrect terminology, unnatural phrasing, grammatical errors, or context-sensitive mistakes.
-
-Poliglota is intended to assist with repetitive translation work, not to guarantee publication-ready results.
-
-For critical, legal, medical, commercial, or highly specialized content, professional review may be necessary.
-
-Translation quality and performance depend on the selected engine, language pair, model, hardware, and text being translated.
-
-## Extensible architecture
-
-Poliglota separates reusable translation functionality from framework-specific
-localization handling. The layered structure is in place:
-
-- **Core** (`poliglota.core`) — implemented: locale, translation
-  request/result data, and the `FormatAdapter` / `TranslationEngine` contracts.
-  Free of any format- or engine-specific code.
-- **Format adapters** (`poliglota.formats`) — implemented for ARB.
-- **CLI** (`poliglota.cli`) — implemented: `validate`, `sync`, `list-locales`.
-- **Translation engines** — planned, not implemented.
-
-See `docs/architecture/overview.md` for the layer rules and the decoupling
-guard that enforces them.
-
-## Documentation
-
-- `docs/architecture/overview.md` — project layers and contracts.
-- `docs/supported-formats.md` — what is implemented per format.
-- `docs/guides/arb-workflow.md` — the ARB commands with real output.
-- `docs/guides/translation-engine.md` — Marian offline engine overview and usage.
-- `docs/development/testing.md` — how to run tests and lint.
-
-## Translation Models
-
-Poliglota uses **Opus-MT** (Helsinki-NLP) for offline neural translation when the `--engine marian` option is invoked.
-
-**Model Attribution (CC-BY-4.0)**:
-- Models: [Helsinki-NLP/Opus-MT](https://huggingface.co/Helsinki-NLP) by Language Technology Research Group, University of Helsinki
-- License: [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)
-- Citation: Tiedemann & Thottingal (2020), "Opus-MT – Building open translation services for the World"
-- Weights & Models: Available on [Hugging Face](https://huggingface.co/Helsinki-NLP)
-
-**Installation**:
-To use neural translation, install optional ML dependencies:
-```bash
-pip install poliglota[ml]
-```
-Or manually:
-```bash
-pip install torch>=2.0 transformers>=4.35 huggingface_hub>=0.20
-```
-
-**Usage**:
-```bash
-poliglota translate --source en_US --target pt_BR --text "Hello, World!"
-```
-
-See [Translation Engine Guide](docs/guides/translation-engine.md) for detailed setup and examples.
-
-## Development
-
-Poliglota requires Python 3.11 or newer and has no runtime dependencies at this
-stage. The reference environment for the latest validation is Python 3.13.11 on
-Windows. See [`docs/development/testing.md`](docs/development/testing.md) for
-setup and test instructions.
-
-The project uses Python packaging configuration in `pyproject.toml`. Automated
-tests and code-quality checks are part of the development workflow.
-
-Install Poliglota with the development tools declared in `pyproject.toml`
-(`pytest` and `ruff`):
+For development tooling:
 
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[gpu,dev]"
 ```
+
+### Typical CLI commands
+
+```bash
+poliglota validate --root . --source pt_BR --format arb
+poliglota sync --root . --source pt_BR --dry-run --format arb
+poliglota list-locales --root . --format json
+poliglota translate --source pt_BR --target en_US --text "Olá, mundo!" --engine marian
+```
+
+## Operating model and practical use cases
+
+Poliglota is meant for software teams that need to manage multiple locale files in a consistent and repeatable way. Typical scenarios include:
+
+- validating that all locales contain the same keys as the source locale
+- synchronization of missing keys into target locales
+- checking placeholder mismatches such as `{count}` or `{name}` across files
+- translating text locally using cached model assets instead of routing all work through external services
+- building a reusable localization pipeline around a modular set of adapters
+
+## Formats and operations
+
+The runtime implementation currently includes these format adapters in the default registry:
+
+| Format | Status in code | CLI support | Validation | Synchronization | Translation workflow | Notes |
+| --- | --- | --- | --- | --- | --- | --- |
+| `arb` | Confirmed | Yes | Confirmed | Confirmed | Supported by the project workflow | Most explicit ARB validation and sync behavior |
+| `yaml` | Confirmed | Yes | Confirmed via adapter contract | Confirmed via generic operations | Supported by adapter layer | Format adapter exists in the runtime registry |
+| `json` | Confirmed | Yes | Confirmed via adapter contract | Confirmed via generic operations | Supported by adapter layer | Locale files supported by generic operations |
+| `xml` | Confirmed | Yes | Confirmed via adapter contract | Confirmed via generic operations | Supported by adapter layer | Adapter exists in the registry |
+| Other formats | Not confirmed as implemented in this branch | Not documented as runtime-supported | Unverified | Unverified | Unverified | Requires explicit adapter implementation |
+
+The implementation is therefore broader than ARB-only, but the exact maturity of each adapter can vary by file structure and validation coverage. The code and tests confirm the existence of adapters and CLI support for `arb`, `yaml`, `json`, and `xml`.
+
+## Architecture
+
+The implementation is organized in layers:
+
+- `poliglota/core`: localization models and reusable contracts
+- `poliglota/formats`: adapters and registry setup
+- `poliglota/quality`: validation helpers for placeholders and quality rules
+- `poliglota/engines`: translation engine implementations and protocol layer
+- `poliglota/cli.py`: command dispatch and CLI behavior
+
+The registry is initialized in `poliglota.formats.registry_init` and registers the default adapters for YAML, JSON, XML, and ARB. The CLI chooses a format by name and then delegates work to the generic operations layer rather than embedding format-specific behavior in the command surface.
+
+## Translation engines and GPU status
+
+The repository includes two concrete translation engine implementations:
+
+- `marian`: default engine path when no engine is specified
+- `pytorch`: PyTorch/Transformers engine alternative backed by Hugging Face model loading
+
+The engine layer is optional in practice and is tied to the `gpu` extra in `pyproject.toml`. The project contains GPU detection and VRAM validation utilities, but those features are implementation pieces, not proof that every CUDA/MPS environment is fully validated for translation performance.
+
+The current state is:
+
+- CPU execution path is implemented and can be selected explicitly
+- GPU device detection and VRAM checks are present in the codebase
+- GPU-enabled translation behavior is environment-dependent and should be treated as subject to local verification
+- benchmark results and real-world performance numbers remain part of the ongoing evaluation, not a documented guarantee
+
+This means the README should describe GPU support as implemented and environment-dependent, not as proven universal acceleration for translation.
+
+## Offline requirements and model preparation
+
+Offline local translation is not automatic; it depends on the selected engine, the model registry or local cache, and the required dependencies.
+
+The implementation expects a model to be available locally when offline mode is in effect, and it includes checks around local cache state and model loading. The code path is designed to handle that explicitly, but it does not guarantee every language pair or every model will work without a compatible environment and cached assets.
+
+Practical requirements include:
+
+- required ML dependencies from `pyproject.toml`
+- configured model assets or a valid cached Hugging Face model
+- a supported language pair for the chosen engine
+- local device compatibility for CPU, CUDA, or MPS paths
+
+This should be read as a requirement for the local translation flow, not as a blanket promise of always-available offline translation.
+
+## Development and validation
+
+The repository uses `pytest` and `ruff` as the development validation workflow.
 
 Run the test suite:
 
@@ -177,34 +142,34 @@ Run the test suite:
 python -m pytest
 ```
 
-Run the linter and the formatter check (when `ruff` is installed):
+Run lint and formatting checks:
 
 ```bash
 python -m ruff check poliglota tests
 python -m ruff format --check poliglota tests
 ```
 
-## Contributing
+## Documentation
 
-Contributions are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
-full guidelines: discuss significant changes before implementing them, keep
-changes focused and minimal, add or update tests, and include the real test
-output in pull requests.
+Relevant documents in this repository include:
 
-Do not add translation engines, model downloads, or network calls without
-prior discussion, and never commit secrets, credentials, or model artifacts.
+- `docs/architecture/overview.md` — architecture overview
+- `docs/supported-formats.md` — format support notes
+- `docs/guides/translation-engine.md` — translation engine behavior and model assumptions
+- `docs/guides/arb-workflow.md` — ARB-specific workflow examples
+- `docs/development/testing.md` — testing and validation procedure
+
+## Important caveats
+
+- The project is designed as a reusable localization toolkit, not as a Flutter-only utility.
+- ARB remains an important workflow, but the current codebase includes broader runtime support.
+- The translation engine stack is optional and depends on extra packages and model assets.
+- GPU detection and VRAM checks are implemented, but local GPU translation quality and performance still require environment-specific validation.
+- Benchmark evaluation for CPU/GPU performance is ongoing and should not be treated as final or guaranteed.
 
 ## License
 
-The original code of Poliglota is released under the **MIT License**. See the
-[`LICENSE`](LICENSE) file at the repository root.
+The project code is released under the MIT License. See `LICENSE` for the original code terms.
 
-Copyright (c) 2026 Jorge Ezequiel de Lima Santos.
+Third-party models, weights, tokenizers, and related resources remain subject to their own licenses and terms of use.
 
-The MIT License covers Poliglota's original code and the project materials the
-author is entitled to license that way. It does **not** cover translation
-models, weights, tokenizers, vocabularies, language packages, or other
-third-party resources that users may obtain separately: those keep their own
-licenses and terms of use, and Poliglota does not guarantee that they can be
-freely redistributed. See
-[`docs/third-party-resources.md`](docs/third-party-resources.md).
