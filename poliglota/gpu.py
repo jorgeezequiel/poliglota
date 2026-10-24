@@ -1,0 +1,284 @@
+"""Utilities for GPU device detection and VRAM validation."""
+
+from __future__ import annotations
+
+import logging
+import re
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+logger = logging.getLogger(__name__)
+
+__all__ = ["detect_device", "get_device_info", "validate_vram"]
+
+_TORCH_MIN_VERSION = (2, 7, 0)
+_TORCH_VERSION_PARTS = 3
+
+
+def _parse_torch_version(version: str) -> tuple[int, int, int]:
+    """Parse a torch version string into a comparable tuple."""
+    numbers = re.findall(r"\d+", version.split("+", 1)[0])
+    if not numbers:
+        return (0, 0, 0)
+    while len(numbers) < _TORCH_VERSION_PARTS:
+        numbers.append("0")
+
+    version_tuple: tuple[int, int, int] = (
+        int(numbers[0]),
+        int(numbers[1]),
+        int(numbers[2]),
+    )
+    return version_tuple
+
+
+def _coerce_float(value: object) -> float:
+    """Convert a value from a torch API into a float, tolerating common object types."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def _require_torch() -> ModuleType:
+    """Import torch lazily and enforce the project minimum version."""
+    try:
+        import torch  # noqa: PLC0415
+    except ImportError as exc:
+        msg = "GPU support requires torch >= 2.7.0"
+        raise RuntimeError(msg) from exc
+
+    if _parse_torch_version(getattr(torch, "__version__", "0.0.0")) < _TORCH_MIN_VERSION:
+        msg = "GPU support requires torch >= 2.7.0"
+        raise RuntimeError(msg)
+
+    return torch
+
+
+def _is_mps_available(torch: ModuleType) -> bool:
+    """Return True when Apple MPS is present and available."""
+    mps = getattr(torch, "mps", None)
+    if mps is None:
+        return False
+    is_available = getattr(mps, "is_available", None)
+    if callable(is_available):
+        return bool(is_available())
+    return False
+
+
+def _bytes_to_gb(value_bytes: float) -> float:
+    """Convert bytes to GiB for reporting."""
+    return float(value_bytes) / (1024**3)
+
+
+def _cuda_vram_stats(torch: ModuleType) -> tuple[float, float]:
+    """Return total and free CUDA memory in GiB."""
+    if not bool(getattr(torch.cuda, "is_available", lambda: False)()):
+        return 0.0, 0.0
+
+    total_bytes = 0.0
+    free_bytes = 0.0
+
+    try:
+        total_bytes, free_bytes = torch.cuda.mem_get_info()
+    except (AttributeError, RuntimeError, ValueError):
+        properties = torch.cuda.get_device_properties(0)
+        total_bytes = float(getattr(properties, "total_memory", 0.0))
+        free_bytes = total_bytes
+
+    return _bytes_to_gb(total_bytes), _bytes_to_gb(free_bytes)
+
+
+def _mps_vram_stats(torch: ModuleType) -> tuple[float, float]:
+    """Return total and free MPS memory in GiB when available."""
+    if not _is_mps_available(torch):
+        return 0.0, 0.0
+
+    mps = torch.mps
+    total_bytes = 0.0
+    used_bytes = 0.0
+
+    recommended_max = getattr(mps, "recommended_max_memory", None)
+    if callable(recommended_max):
+        try:
+            total_bytes = _coerce_float(recommended_max())
+        except (TypeError, ValueError):
+            total_bytes = 0.0
+
+    current_allocated = getattr(mps, "current_allocated_memory", None)
+    if callable(current_allocated):
+        try:
+            used_bytes = _coerce_float(current_allocated())
+        except (TypeError, ValueError):
+            used_bytes = 0.0
+
+    free_bytes = max(total_bytes - used_bytes, 0.0)
+    return _bytes_to_gb(total_bytes), _bytes_to_gb(free_bytes)
+
+
+def detect_device(preferred: str = "auto") -> str:
+    """Return the active device string for torch operations."""
+    torch = _require_torch()
+    requested = (preferred or "auto").strip().lower()
+    selected = "cpu"
+
+    if requested not in {"auto", "cuda", "mps", "cpu"}:
+        logger.warning("Unsupported device preference %r; defaulting to auto.", preferred)
+        requested = "auto"
+
+    cuda_available = bool(getattr(torch.cuda, "is_available", lambda: False)())
+    mps_available = _is_mps_available(torch)
+
+    if requested == "cuda" and cuda_available:
+        selected = "cuda"
+        logger.info("CUDA selected as preferred device.")
+    elif requested == "cuda":
+        logger.warning("CUDA requested but unavailable; falling back to CPU.")
+    elif requested == "mps" and mps_available:
+        selected = "mps"
+        logger.info("MPS selected as preferred device.")
+    elif requested == "mps":
+        logger.warning("MPS requested but unavailable; falling back to CPU.")
+    elif requested == "cpu":
+        selected = "cpu"
+        logger.info("CPU selected as requested.")
+    elif cuda_available:
+        selected = "cuda"
+        logger.info("Auto-selected CUDA device.")
+    elif mps_available:
+        selected = "mps"
+        logger.info("Auto-selected MPS device.")
+    else:
+        logger.warning("No CUDA or MPS device detected; falling back to CPU.")
+
+    return selected
+
+
+def validate_vram(min_gb: float = 1.0) -> bool:
+    """Check whether the current device has enough free VRAM for the target minimum."""
+    torch = _require_torch()
+    device = detect_device("auto")
+
+    if device == "cpu":
+        logger.debug(
+            "Skipping VRAM validation on CPU because no dedicated VRAM is available."
+        )
+        return True
+
+    min_gb = max(float(min_gb), 0.0)
+    required_gb = min_gb * 1.08
+
+    if device == "cuda":
+        total_gb, free_gb = _cuda_vram_stats(torch)
+        logger.debug(
+            "Checking CUDA VRAM: total=%.2f GiB, free=%.2f GiB, required=%.2f GiB.",
+            total_gb,
+            free_gb,
+            required_gb,
+        )
+        is_valid = free_gb >= required_gb
+        if is_valid:
+            logger.info(
+                "CUDA VRAM validation passed: %.2f GiB free >= %.2f GiB required.",
+                free_gb,
+                required_gb,
+            )
+        else:
+            logger.warning(
+                "CUDA VRAM validation failed: %.2f GiB free < %.2f GiB required.",
+                free_gb,
+                required_gb,
+            )
+        return is_valid
+
+    if device == "mps":
+        total_gb, free_gb = _mps_vram_stats(torch)
+        logger.debug(
+            "Checking MPS VRAM: total=%.2f GiB, free=%.2f GiB, required=%.2f GiB.",
+            total_gb,
+            free_gb,
+            required_gb,
+        )
+        is_valid = free_gb >= required_gb if total_gb > 0 else False
+        if is_valid:
+            logger.info(
+                "MPS VRAM validation passed: %.2f GiB free >= %.2f GiB required.",
+                free_gb,
+                required_gb,
+            )
+        else:
+            logger.warning(
+                "MPS VRAM validation failed or memory metadata was unavailable: "
+                "%.2f GiB free < %.2f GiB required.",
+                free_gb,
+                required_gb,
+            )
+        return is_valid
+
+    logger.warning(
+        "Unknown device %r encountered during VRAM validation; returning False.",
+        device,
+    )
+    return False
+
+
+def get_device_info() -> dict[str, object]:
+    """Return a summary describing the selected device and current memory state."""
+    torch = _require_torch()
+    device = detect_device("auto")
+    info: dict[str, object] = {
+        "device": device,
+        "name": "CPU",
+        "total_vram_gb": 0.0,
+        "free_vram_gb": 0.0,
+        "compute_capability": None,
+    }
+
+    if device == "cuda":
+        try:
+            info["name"] = torch.cuda.get_device_name(0)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Unable to read CUDA device name: %s", exc)
+            info["name"] = "CUDA"
+
+        total_gb, free_gb = _cuda_vram_stats(torch)
+        info["total_vram_gb"] = total_gb
+        info["free_vram_gb"] = free_gb
+
+        try:
+            info["compute_capability"] = torch.cuda.get_device_capability(0)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Unable to read CUDA compute capability: %s", exc)
+            info["compute_capability"] = None
+
+        logger.debug(
+            "Detected CUDA device info: name=%s, total_vram_gb=%.2f, "
+            "free_vram_gb=%.2f, capability=%s",
+            info["name"],
+            info["total_vram_gb"],
+            info["free_vram_gb"],
+            info["compute_capability"],
+        )
+        return info
+
+    if device == "mps":
+        info["name"] = "Apple Metal Performance Shaders"
+        total_gb, free_gb = _mps_vram_stats(torch)
+        info["total_vram_gb"] = total_gb
+        info["free_vram_gb"] = free_gb
+        info["compute_capability"] = None
+        logger.debug(
+            "Detected MPS device info: name=%s, total_vram_gb=%.2f, free_vram_gb=%.2f",
+            info["name"],
+            info["total_vram_gb"],
+            info["free_vram_gb"],
+        )
+        return info
+
+    logger.debug("Detected CPU device info: name=%s", info["name"])
+    return info

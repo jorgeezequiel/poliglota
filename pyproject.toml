@@ -21,6 +21,11 @@ dev = [
     "pytest>=8.0",
     "ruff",
 ]
+gpu = [
+    "torch>=2.7.0",
+    "transformers>=5.20.0",
+    "huggingface-hub>=0.20.0",
+]
 
 [tool.setuptools]
 packages = ["poliglota", "poliglota.core", "poliglota.formats"]

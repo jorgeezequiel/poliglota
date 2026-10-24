@@ -9,8 +9,9 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
+from poliglota import gpu
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
 from .formats.registry import FormatRegistry
@@ -216,8 +217,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     translate_parser.add_argument(
         "--engine",
-        default="marian",
-        help="Translation engine (marian only for Phase 6a)",
+        default=os.environ.get("POLIGLOTA_ENGINE", "marian"),
+        help="Translation engine (marian or pytorch; default resolves POLIGLOTA_ENGINE)",
     )
     translate_parser.add_argument(
         "--model",
@@ -226,8 +227,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     translate_parser.add_argument(
         "--device",
-        default="cpu",
-        help="Device to run inference on (cpu, cuda, mps)",
+        default="auto",
+        help="Device to run inference on (auto, cpu, cuda, mps)",
     )
     translate_parser.add_argument(
         "--preserve-placeholders",
@@ -499,6 +500,82 @@ def _verify_offline_capability(model_name: str) -> bool:
     return cache_exists
 
 
+def _resolve_device_name(device: str | None) -> str:
+    """Resolve a requested device preference to the final runtime device."""
+    requested = (device or "auto").strip().lower()
+    if requested == "auto":
+        resolved = gpu.detect_device("auto")
+        logger.info("Auto-selected runtime device via poliglota.gpu.detect_device(): %s", resolved)
+        return resolved
+
+    if requested not in {"cpu", "cuda", "mps"}:
+        logger.warning("Unsupported device preference '%s'; falling back to auto detection.", requested)
+        resolved = gpu.detect_device("auto")
+        logger.info("Selected final device after fallback: %s", resolved)
+        return resolved
+
+    resolved = gpu.detect_device(requested)
+    logger.info("Resolved device selection: requested=%s -> final=%s", requested, resolved)
+    return resolved
+
+
+def _get_engine(engine_name: str, model_name: str, device: str, batch_size: int):
+    """Build the selected translation engine while keeping Marian as the default."""
+    engine_key = (engine_name or os.environ.get("POLIGLOTA_ENGINE") or "marian").strip().lower()
+    resolved_device = _resolve_device_name(device)
+    logger.info(
+        "Selecting translation engine: engine=%s model=%s requested_device=%s final_device=%s batch_size=%s",
+        engine_key,
+        model_name,
+        device,
+        resolved_device,
+        batch_size,
+    )
+
+    if engine_key == "pytorch":
+        try:
+            pytorch_module = importlib.import_module("poliglota.engines.pytorch_engine")
+            engine_cls = pytorch_module.PyTorchTranslationEngine
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "PyTorch engine is not available in this build. Install the optional ML dependencies or choose the Marian engine."
+            ) from exc
+
+        adapter = engine_cls(model_name=model_name, device=resolved_device)
+        adapter.batch_size = max(1, int(batch_size))
+        logger.info(
+            "Initializing PyTorch engine with device=%s and batch_size=%s",
+            resolved_device,
+            adapter.batch_size,
+        )
+        return adapter
+
+    if engine_key == "marian":
+        try:
+            marian_module = importlib.import_module("poliglota.engines.marian")
+            adapter_cls = marian_module.MariansNMTAdapter
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Marian engine is not available in this build. Install the engine implementation or use a compatible environment."
+            ) from exc
+
+        adapter = adapter_cls(model_name=model_name, device=resolved_device)
+        adapter.batch_size = max(1, int(batch_size))
+        try:
+            logger.info(
+                "Loading Marian model",
+                extra={"model": model_name, "device": resolved_device, "batch_size": adapter.batch_size},
+            )
+            adapter.load_model(device=resolved_device)
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Model '{model_name}' is not cached locally. Run `poliglota download-model --engine marian --model {model_name}` first."
+            ) from exc
+        return adapter
+
+    raise ValueError(f"Unsupported engine '{engine_name}'. Supported values: marian, pytorch.")
+
+
 def _get_marian_adapter(model_name: str, device: str):
     """Create and initialize a Marian adapter for the current environment."""
     try:
@@ -640,13 +717,13 @@ def _run_translate(
         Exit code (0 on success, 1 on error).
 
     """
-    if engine != "marian":
-        print(f"Error: Unsupported engine '{engine}'. Only 'marian' is available in Phase 6a.")
+    normalized_engine = (engine or "marian").strip().lower()
+    if normalized_engine not in {"marian", "pytorch"}:
+        print(f"Error: Unsupported engine '{engine}'. Use one of: marian, pytorch.")
         return 1
 
-    if device not in {"cpu", "cuda", "mps"}:
-        print(f"Error: Unsupported device '{device}'. Use one of: cpu, cuda, mps.")
-        return 1
+    resolved_device = _resolve_device_name(device)
+    logger.info("Final device selected for translation: %s", resolved_device)
 
     if model is None or not str(model).strip():
         try:
@@ -658,17 +735,45 @@ def _run_translate(
             return 1
 
     try:
-        _verify_offline_capability(model)
-        _validate_resource_footprint(model)
-        translated, placeholder_stats, elapsed_ms = _translate_with_placeholders(
-            text,
-            source,
-            target,
-            preserve_placeholders=preserve_placeholders,
-            model_name=model,
-            device=device,
-            batch_size=batch_size,
+        if normalized_engine == "marian":
+            _verify_offline_capability(model)
+            _validate_resource_footprint(model)
+        adapter = _get_engine(
+            normalized_engine,
+            model,
+            resolved_device,
+            batch_size,
         )
+        logger.info(
+            "Translation adapter selected: engine=%s model=%s device=%s batch_size=%s",
+            normalized_engine,
+            model,
+            getattr(adapter, "device", resolved_device),
+            getattr(adapter, "batch_size", batch_size),
+        )
+        if normalized_engine == "marian":
+            translated, placeholder_stats, elapsed_ms = _translate_with_placeholders(
+                text,
+                source,
+                target,
+                preserve_placeholders=preserve_placeholders,
+                model_name=model,
+                device=resolved_device,
+                batch_size=batch_size,
+            )
+        else:
+            translated = adapter.translate(
+                text,
+                _locale_to_engine_code(source),
+                _locale_to_engine_code(target),
+            )
+            placeholder_stats = {"preserved": 0, "substituted": 0, "missing": 0}
+            elapsed_ms = 0.0
+            logger.info(
+                "PyTorch inference completed on device=%s for model=%s",
+                getattr(adapter, "device", resolved_device),
+                model,
+            )
     except ValueError as exc:
         print(f"Error: {exc}")
         return 1
