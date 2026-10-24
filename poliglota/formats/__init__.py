@@ -6,4 +6,7 @@ format-specific details (file naming, placeholders, metadata) out of the core.
 Currently available:
 
 - :mod:`poliglota.formats.arb` -- Flutter / ICU ARB files.
+- :mod:`poliglota.formats.yaml` -- YAML files.
+- :mod:`poliglota.formats.json` -- JSON files.
+- :mod:`poliglota.formats.xml` -- XML files.
 """

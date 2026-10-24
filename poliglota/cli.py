@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
-from .formats.arb import ARBFormatAdapter
 from .formats.registry import FormatRegistry
+from .formats.registry_init import get_registry as get_global_registry
 from .formats.operations import discover_resources, validate_with_adapter, sync_with_adapter
 from .quality.placeholders import ArbPlaceholderProtector
 
@@ -69,11 +69,10 @@ def _load_glossary(glossary_path: Path, locale: str) -> dict[str, str]:
 
 
 def _get_registry() -> FormatRegistry:
-    """Get or initialize the global format registry."""
+    """Get or initialize the global format registry with all adapters."""
     global _registry
     if _registry is None:
-        _registry = FormatRegistry()
-        _registry.register(ARBFormatAdapter())
+        _registry = get_global_registry()
     return _registry
 
 
@@ -90,7 +89,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--source", default=DEFAULT_SOURCE_LOCALE, help="source locale to use as reference"
     )
     validate_parser.add_argument(
-        "--format", default="arb", help="localization format (default: arb)"
+        "--format", default="arb", choices=["arb", "yaml", "json", "xml"],
+        help="localization format: arb, yaml, json, or xml (default: arb)"
     )
     validate_parser.add_argument(
         "--glossary", type=Path, default=None, help="glossary file for terminology validation (JSON or CSV)"
@@ -122,13 +122,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="show what would change without writing files"
     )
     sync_parser.add_argument(
-        "--format", default="arb", help="localization format (default: arb)"
+        "--format", default="arb", choices=["arb", "yaml", "json", "xml"],
+        help="localization format: arb, yaml, json, or xml (default: arb)"
     )
 
     list_parser = subparsers.add_parser("list-locales", help="list locale files discovered")
     list_parser.add_argument("--root", type=Path, default=DEFAULT_ROOT, help="project root to scan")
     list_parser.add_argument(
-        "--format", default="arb", help="localization format (default: arb)"
+        "--format", default="arb", choices=["arb", "yaml", "json", "xml"],
+        help="localization format: arb, yaml, json, or xml (default: arb)"
     )
 
     translate_parser = subparsers.add_parser(
