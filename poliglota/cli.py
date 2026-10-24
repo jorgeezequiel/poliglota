@@ -9,7 +9,7 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
@@ -606,8 +606,39 @@ def _run_translate(
 ) -> int:
     """Translate a string through the offline Marian engine.
 
-    If --model is not specified, it auto-selects M2M-100-418M (primary) or
-    mBART-50 (fallback) based on the source/target language pair.
+    Motor Selection:
+        If --model is not specified, auto-selects M2M-100-418M (primary) or
+        mBART-50 (fallback) based on the source/target language pair. Selection
+        respects HF_HUB_OFFLINE=1 (offline mode accepts only cached models).
+        Override with POLIGLOTA_DEFAULT_MOTOR environment variable.
+
+    Offline Capability Validation:
+        Calls _verify_offline_capability() before model load. If HF_HUB_OFFLINE=1
+        and cache missing, raises RuntimeError with clear error message.
+
+    Resource Footprint Validation:
+        Calls _validate_resource_footprint() for non-blocking warnings if model
+        exceeds 2GB disk or 2GB RAM thresholds (emitted to logger, non-fatal).
+
+    Batch Size Auto-scaling:
+        MariansNMTAdapter.translate_batch() automatically adjusts batch_size based
+        on device memory. On OOM: reduces batch_size and retries; fallback to CPU
+        if GPU memory exhausted.
+
+    Args:
+        text: Text string to translate.
+        source: Source locale code (e.g. pt_BR).
+        target: Target locale code (e.g. en_US).
+        engine: Translation engine name (marian only for Phase 6a).
+        model: Specific HuggingFace model name; if None, auto-selected.
+        device: Device to run inference on (cpu, cuda, mps).
+        preserve_placeholders: Whether to preserve ARB placeholders.
+        batch_size: Initial batch size for inference (auto-scaled on demand).
+        json_output: If True, output JSON instead of plain text.
+
+    Returns:
+        Exit code (0 on success, 1 on error).
+
     """
     if engine != "marian":
         print(f"Error: Unsupported engine '{engine}'. Only 'marian' is available in Phase 6a.")
