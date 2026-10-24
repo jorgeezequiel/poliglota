@@ -1,4 +1,29 @@
 # Changelog
+## [0.0.1] - 2026-10-24
+
+### Added
+- GPU support via PyTorch with CUDA detection and fallback
+- CLI flags `--device` for GPU/CPU selection
+- Comprehensive benchmark: CPU vs. GPU on PazCall corpus
+- VRAM validation and automatic device switching
+- Context manager for resource cleanup
+
+### Fixed
+- t5-small model loading on GPU with proper memory management
+- Batch size reduction on OOM errors
+- Device fallback logic in PyTorchTranslationEngine
+- MPS (Metal Performance Shaders) runtime check on non-macOS platforms
+
+### Changed
+- PyTorch engine now validates VRAM before GPU initialization
+- Reduced VRAM requirement for t5-small from 1.5 GB to 0.8 GB
+
+### Verified
+- CUDA availability and tensor operations on GTX 1050 Ti
+- pt-BR to en-US and pt-BR to es-ES translation pairs
+- Benchmark results in reports/PAZCALL_CPU_GPU_RESULTS.json
+
+
 
 All notable changes to this project are documented in this file.
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "poliglota"
-version = "0.1.0"
+version = "0.0.1"
 description = "Localization toolkit: ARB validation/sync with a framework-agnostic core"
 authors = [{ name = "Jorge Ezequiel de Lima Santos" }]
 readme = "README.md"
@@ -31,7 +31,7 @@ gpu = [
 packages = ["poliglota", "poliglota.core", "poliglota.formats"]
 
 [tool.pytest.ini_options]
-minversion = "8.0"
+minversion = "0.0.1"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
 filterwarnings = ["error"]
@@ -40,7 +40,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "0.0.1"
 line-length = 100
 
 [tool.ruff.lint]

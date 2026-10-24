@@ -146,7 +146,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         if selected == "cpu":
             return "cpu"
 
-        required_vram = 2.0 if "mbart" in self.model_name.lower() else 1.5
+        required_vram = 2.0 if "mbart" in self.model_name.lower() else 0.8
         if not validate_vram(min_gb=required_vram):
             logger.warning(
                 "Insufficient VRAM for model %s on %s. Falling back to CPU.",
@@ -479,8 +479,13 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         if torch is not None:
             if hasattr(torch.cuda, "empty_cache"):
                 torch.cuda.empty_cache()
+            # MPS (Metal Performance Shaders) is only available on macOS
             if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
-                torch.mps.empty_cache()
+                try:
+                    torch.mps.empty_cache()
+                except RuntimeError:
+                    # MPS backend not available on this platform
+                    pass
 
         gc.collect()
         self.device = "cpu"
