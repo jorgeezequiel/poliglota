@@ -66,5 +66,11 @@ and the project aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Notes
 
-- No translation engine is implemented yet. Engine selection is pending
-  explicit approval.
+- Marian and PyTorch/Transformers translation engine paths are present in the
+  current codebase and are treated as optional local-engine flows, not as
+  universally validated production guarantees.
+- The project is still in an early stage and does not currently have a public
+  release tag or published version record beyond the package metadata in
+  `pyproject.toml`.
+- Future versioning and release decisions are governed by the SemVer and
+  changelog policy described in `CONTRIBUTING.md`.
