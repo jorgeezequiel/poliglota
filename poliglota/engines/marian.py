@@ -331,43 +331,77 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         source_lang: str,
         target_lang: str,
     ) -> list[str]:
-        """Translate a list of strings in batches using the configured batch size."""
+        """Translate a list of strings in batches using an adaptive OOM-aware batch size.
+
+        The instance batch_size is kept unchanged; each chunk retries with a locally
+        reduced batch size when the model hits a device memory limit.
+        """
         self._validate_pair(source_lang, target_lang)
         if not texts:
             return []
 
         start = time.perf_counter()
         translated: list[str] = []
-        for index in range(0, len(texts), self.batch_size):
-            chunk = texts[index : index + self.batch_size]
-            stripped_chunk: list[str] = []
-            for value in chunk:
-                cleaned, positions = self._strip_known_placeholders(value)
-                self._last_placeholder_positions = positions
-                stripped_chunk.append(cleaned)
+        index = 0
+        while index < len(texts):
+            current_batch_size = min(self.batch_size, len(texts) - index)
 
-            try:
-                results = self._translate_with_model(stripped_chunk)
-            except Exception as exc:  # pragma: no cover - runtime engine failure.
-                if torch is not None and hasattr(torch, "cuda"):
-                    cuda_oom = getattr(torch.cuda, "OutOfMemoryError", None)
-                    if cuda_oom is not None and isinstance(exc, cuda_oom):
-                        logger.exception(
-                            "CUDA out-of-memory during batch translation; falling back to CPU."
+            while True:
+                chunk = texts[index : index + current_batch_size]
+                stripped_chunk: list[str] = []
+                for value in chunk:
+                    cleaned, positions = self._strip_known_placeholders(value)
+                    self._last_placeholder_positions = positions
+                    stripped_chunk.append(cleaned)
+
+                try:
+                    results = self._translate_with_model(stripped_chunk)
+                    break
+                except Exception as exc:  # pragma: no cover - runtime engine failure.
+                    is_oom = False
+                    if torch is not None:
+                        cuda_oom = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None)
+                        mps_oom = getattr(getattr(torch, "mps", None), "OutOfMemoryError", None)
+                        is_oom = (
+                            (cuda_oom is not None and isinstance(exc, cuda_oom))
+                            or (mps_oom is not None and isinstance(exc, mps_oom))
+                            or "out of memory" in str(exc).lower()
                         )
-                        self.device = "cpu"
-                        if self._model is not None:
-                            self._model.to(self.device)
-                        results = self._translate_with_model(stripped_chunk)
-                        continue
-                msg = f"Marian batch inference failed: {exc}"
-                raise RuntimeError(msg) from exc
+
+                    if not is_oom:
+                        msg = f"Marian batch inference failed: {exc}"
+                        raise RuntimeError(msg) from exc
+
+                    if current_batch_size == 1:
+                        if self.device != "cpu" and torch is not None:
+                            cuda_oom = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None)
+                            if cuda_oom is not None and isinstance(exc, cuda_oom):
+                                logger.exception(
+                                    "CUDA out-of-memory during batch translation; falling back to CPU."
+                                )
+                                self.device = "cpu"
+                                if self._model is not None:
+                                    self._model.to(self.device)
+                                try:
+                                    results = self._translate_with_model(stripped_chunk)
+                                    break
+                                except Exception as retry_exc:  # pragma: no cover - runtime engine failure.
+                                    msg = f"Marian batch inference failed: {retry_exc}"
+                                    raise RuntimeError(msg) from retry_exc
+                        msg = f"Marian batch inference failed: {exc}"
+                        raise RuntimeError(msg) from exc
+
+                    new_batch_size = max(1, current_batch_size // 2)
+                    logger.warning(f"OOM detected; reducing batch_size to {new_batch_size}")
+                    current_batch_size = new_batch_size
+                    continue
 
             for original_text, result in zip(chunk, results, strict=True):
                 _, positions = self._strip_known_placeholders(original_text)
                 self._last_placeholder_positions = positions
                 restored = self._restore_placeholders_at_positions(result, positions)
                 translated.append(restored)
+            index += current_batch_size
 
         elapsed_ms = (time.perf_counter() - start) * 1000
         self._last_inference_time_ms = elapsed_ms

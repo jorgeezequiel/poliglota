@@ -4,6 +4,7 @@ import json
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -40,6 +41,7 @@ class TestTranslationRequest:
         request = TranslationRequest("Hello", "en", "pt")
 
         with pytest.raises(FrozenInstanceError):
+            # pyright: ignore[reportAttributeAccessIssue]
             request.text = "Bonjour"
 
     def test_translation_request_equality_and_repr_are_stable(self) -> None:
@@ -75,7 +77,7 @@ class TestTranslationResult:
         result = TranslationResult("Olá", "en", "pt", 0.98)
 
         with pytest.raises(FrozenInstanceError):
-            result.translated_text = "Hello"
+            cast(Any, result).translated_text = "Hello"
 
     def test_translation_result_equality_uses_all_fields(self) -> None:
         left = TranslationResult("Olá", "en", "pt", 0.89)
@@ -277,6 +279,34 @@ class TestMariansNMTAdapter:
 
             with pytest.raises(RuntimeError, match="Marian batch inference failed"):
                 adapter.translate_batch(["Hello", "Good morning"], "en", "es")
+
+    def test_adapter_translate_batch_reduces_batch_size_on_oom(self) -> None:
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
+            adapter.batch_size = 8
+
+            def fake_translate(texts: list[str]) -> list[str]:
+                # OOM when batch_size=4; succeed at batch_size=2
+                if len(texts) == 4:
+                    raise RuntimeError("CUDA out of memory")
+                # Return translated text for each input (2 items per batch at reduced size)
+                return [f"Translated_{i}" for i in range(len(texts))]
+
+            adapter._translate_with_model = Mock(side_effect=fake_translate)
+
+            with patch.object(marian_module.logger, "warning") as warning_mock:
+                result = adapter.translate_batch(
+                    ["Hello", "Good morning", "Hi", "How are you"],
+                    "en",
+                    "es",
+                )
+
+        # After OOM at batch_size=4, retries with batch_size=2
+        # First batch: ["Hello", "Good morning"] -> ["Translated_0", "Translated_1"]
+        # Second batch: ["Hi", "How are you"] -> ["Translated_0", "Translated_1"]
+        assert result == ["Translated_0", "Translated_1", "Translated_0", "Translated_1"]
+        assert adapter.batch_size == 8  # batch_size instance var unchanged
+        warning_mock.assert_any_call("OOM detected; reducing batch_size to 2")
 
     def test_adapter_translate_request_returns_translation_result(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):

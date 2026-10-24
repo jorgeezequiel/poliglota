@@ -6,9 +6,11 @@ import argparse
 import importlib
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
 from .formats.registry import FormatRegistry
@@ -22,9 +24,72 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("poliglota.cli")
 
+_DEFAULT_MOTOR_PRIORITY = (
+    "facebook/m2m100_418M",
+    "facebook/mbart-50-many-to-many-mmt",
+)
+
+_DEFAULT_MOTOR_LANGUAGE_SETS = {
+    "facebook/m2m100_418M": {
+        "en", "pt", "es", "fr", "de", "it", "ru", "ja", "zh", "ar", "tr"
+    },
+    "facebook/mbart-50-many-to-many-mmt": {
+        "en", "pt", "es", "fr", "de", "it", "ru", "ja", "zh", "ar"
+    },
+}
+
+PHASE_D_BENCHMARKS: dict[str, dict[str, float]] = {
+    "M2M-100-418M": {"disk_mb": 840.0, "ram_gb": 1.2},
+    "mBART-50": {"disk_mb": 1500.0, "ram_gb": 2.0},
+    "NLLB-200": {"disk_mb": 2400.0, "ram_gb": 2.5},
+}
+
+_RESOURCE_FOOTPRINT_ALIASES: dict[str, str] = {
+    "facebook/m2m100_418M": "M2M-100-418M",
+    "facebook/mbart-large-50-many-to-many-mmt": "mBART-50",
+    "facebook/mbart-50-many-to-many-mmt": "mBART-50",
+    "nllb-200": "NLLB-200",
+    "nllb-200-distilled-600m": "NLLB-200",
+    "facebook/nllb-200-distilled-600M": "NLLB-200",
+}
+
 
 # Global registry: initialized with available adapters
 _registry: FormatRegistry | None = None
+
+
+def _validate_resource_footprint(model_name: str) -> None:
+    """Validate conservative disk/RAM resource usage for a translation model.
+
+    This is a non-blocking pre-flight check based on Phase D benchmark data.
+    It never raises an exception; it only emits warnings for models above the
+    conservative 2GB threshold or logs an informational message for unknown models.
+
+    Examples:
+        >>> _validate_resource_footprint("M2M-100-418M")
+        >>> _validate_resource_footprint("mBART-50")
+        >>> _validate_resource_footprint("unknown-model")
+    """
+    if model_name is None:
+        logger.info("No model name provided; skipping resource footprint validation")
+        return
+
+    normalized = model_name.strip()
+    canonical_name = _RESOURCE_FOOTPRINT_ALIASES.get(normalized.lower(), normalized)
+    footprint = PHASE_D_BENCHMARKS.get(canonical_name)
+
+    if footprint is None:
+        logger.info("No Phase D resource footprint benchmark available for model %s; skipping validation", model_name)
+        return
+
+    disk = int(footprint["disk_mb"])
+    ram = float(footprint["ram_gb"])
+
+    if disk >= 2048:
+        logger.warning(f"Model {model_name} requires {disk}MB disk (2GB+ may impact install)")
+
+    if ram >= 2.0:
+        logger.warning(f"Model {model_name} requires {ram}GB RAM (2GB+ may cause OOM)")
 
 
 def _load_glossary(glossary_path: Path, locale: str) -> dict[str, str]:
@@ -136,6 +201,7 @@ def _build_parser() -> argparse.ArgumentParser:
     translate_parser = subparsers.add_parser(
         "translate",
         help="translate text with the offline Marian model (Phase 6a)",
+        description="If --model not specified, uses M2M-100-418M (primary) or mBART-50 (fallback).",
     )
     translate_parser.add_argument("text", help="Text to translate")
     translate_parser.add_argument(
@@ -155,8 +221,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     translate_parser.add_argument(
         "--model",
-        default="opus-mt-tc-big-en-pt",
-        help="Marian model name from HuggingFace",
+        default=None,
+        help="Marian model name from HuggingFace; if omitted, default motor is auto-selected",
     )
     translate_parser.add_argument(
         "--device",
@@ -390,6 +456,49 @@ def _translate_with_placeholders(
     return restored, placeholder_stats, elapsed_ms
 
 
+def _verify_offline_capability(model_name: str) -> bool:
+    """Check whether a Hugging Face model is already cached for offline use.
+
+    This is a pre-flight validation step used before trying to load a Marian model.
+    It does not download anything; it only checks the local hub cache used by the
+    Hugging Face ecosystem.
+
+    Args:
+        model_name: Hugging Face model identifier such as ``facebook/m2m100_418M``.
+
+    Returns:
+        ``True`` when the model cache directory exists locally; otherwise ``False``.
+
+    Raises:
+        RuntimeError: If ``HF_HUB_OFFLINE=1`` and the required cache directory is missing.
+
+    Examples:
+        >>> _verify_offline_capability("facebook/m2m100_418M")
+        True
+        >>> _verify_offline_capability("facebook/unknown-model")
+        False
+    """
+    hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+    model_cache_name = model_name.replace("/", "--")
+    cache_dir = hf_home / "hub" / model_cache_name
+    cache_exists = cache_dir.exists()
+    offline_mode = os.environ.get("HF_HUB_OFFLINE") == "1"
+
+    if offline_mode and not cache_exists:
+        logger.warning(
+            "Offline mode is enabled but the model cache is missing for '%s' at '%s'.",
+            model_name,
+            cache_dir,
+        )
+        raise RuntimeError("Model cache not available for offline mode")
+
+    if cache_exists:
+        logger.info("Offline capability verified for model '%s' in cache '%s'.", model_name, cache_dir)
+    else:
+        logger.info("Offline capability check for model '%s': cache not found at '%s'.", model_name, cache_dir)
+    return cache_exists
+
+
 def _get_marian_adapter(model_name: str, device: str):
     """Create and initialize a Marian adapter for the current environment."""
     try:
@@ -414,19 +523,92 @@ def _get_marian_adapter(model_name: str, device: str):
     return adapter
 
 
+def _select_default_motor(source_lang: str, target_lang: str) -> str:
+    """Select the default translation model for a language pair.
+
+    The selection order is M2M-100-418M first, then mBART-50-many-to-many-mmt.
+    When ``HF_HUB_OFFLINE=1`` is set, a candidate model is accepted only if it is
+    already present in the local Hugging Face cache. The environment variable
+    ``POLIGLOTA_DEFAULT_MOTOR`` can override the auto-selection completely.
+
+    Args:
+        source_lang: Source locale code such as ``en_US`` or ``pt_BR``.
+        target_lang: Target locale code such as ``es`` or ``de``.
+
+    Returns:
+        The canonical Hugging Face model identifier for the selected default motor.
+
+    Raises:
+        ValueError: When neither engine supports the requested language pair.
+
+    Examples:
+        >>> _select_default_motor("en_US", "pt_BR")
+        'facebook/m2m100_418M'
+        >>> _select_default_motor("pt_BR", "de")
+        'facebook/mbart-50-many-to-many-mmt'
+    """
+    override = (os.environ.get("POLIGLOTA_DEFAULT_MOTOR") or "").strip()
+    if override:
+        logger.info(f"Selected default motor: {override}")
+        return override
+
+    source_code = _locale_to_engine_code(source_lang).lower()
+    target_code = _locale_to_engine_code(target_lang).lower()
+    if not source_code or not target_code:
+        raise ValueError(
+            f"Unsupported default motor pair: '{source_lang}' -> '{target_lang}'. "
+            "Neither M2M-100-418M nor mBART-50 supports this language combination."
+        )
+
+    m2m_model = "facebook/m2m100_418M"
+    mbart_model = "facebook/mbart-50-many-to-many-mmt"
+    m2m_supported = {"en", "pt", "es", "fr", "de", "it", "ru", "ja", "zh", "ar", "tr"}
+    mbart_supported = {"en", "pt", "es", "fr", "de", "it", "ru", "ja", "zh", "ar"}
+    offline_mode = os.environ.get("HF_HUB_OFFLINE") == "1"
+
+    def _model_in_cache(model_name: str) -> bool:
+        cache_root = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+        cache_key = model_name.replace("/", "--")
+        return (cache_root / "hub" / cache_key).exists()
+
+    def _can_use(model_name: str, supported_languages: set[str]) -> bool:
+        if source_code not in supported_languages or target_code not in supported_languages:
+            return False
+        if offline_mode and not _model_in_cache(model_name):
+            return False
+        return True
+
+    if _can_use(m2m_model, m2m_supported):
+        logger.info(f"Selected default motor: {m2m_model}")
+        return m2m_model
+
+    if _can_use(mbart_model, mbart_supported):
+        logger.info(f"Selected default motor: {mbart_model}")
+        return mbart_model
+
+    raise ValueError(
+        f"Unsupported default motor pair: '{source_lang}' -> '{target_lang}'. "
+        "Neither M2M-100-418M nor mBART-50 supports this language combination."
+    )
+
+
 def _run_translate(
     text: str,
     source: str,
     target: str,
     *,
     engine: str,
-    model: str,
+    model: str | None,
     device: str,
     preserve_placeholders: bool,
     batch_size: int,
     json_output: bool,
 ) -> int:
-    """Translate a string through the offline Marian engine."""
+    """Translate a string through the offline Marian engine.
+
+    If --model is not specified, it auto-selects M2M-100-418M (primary) or
+    mBART-50 (fallback) based on the source/target language pair.
+    """
     if engine != "marian":
         print(f"Error: Unsupported engine '{engine}'. Only 'marian' is available in Phase 6a.")
         return 1
@@ -435,7 +617,18 @@ def _run_translate(
         print(f"Error: Unsupported device '{device}'. Use one of: cpu, cuda, mps.")
         return 1
 
+    if model is None or not str(model).strip():
+        try:
+            model = _select_default_motor(source, target)
+            if not json_output:
+                print(f"Using default motor: {model}")
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            return 1
+
     try:
+        _verify_offline_capability(model)
+        _validate_resource_footprint(model)
         translated, placeholder_stats, elapsed_ms = _translate_with_placeholders(
             text,
             source,
