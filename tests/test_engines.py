@@ -246,16 +246,16 @@ class TestMariansNMTAdapter:
             [(0, "<en>"), (6, "<pt>")],
         )
 
-        assert result == "<<en>>Hola a<<pt>>migo"
+        assert result == "<en>Hola a<pt>migo"
 
     def test_adapter_translate_preserves_known_placeholders(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
-            adapter._translate_with_model = Mock(return_value=["Hola"])
+            adapter._translate_with_model = Mock(return_value=["Hola</en>"])
 
             translated = adapter.translate("<en>Hello</en>", "en", "es")
 
-        assert translated == "<<en>><<en>>Hola"
+        assert translated == "<en>Hola</en>"
 
     def test_adapter_translate_batch_handles_multiple_inputs(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):

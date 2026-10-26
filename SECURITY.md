@@ -2,9 +2,11 @@
 
 ## Scope
 
-Poliglota is a local, offline translation and localization toolkit. At this
-stage it has no runtime dependencies and does not send data to any online
-service. There is no silent online fallback.
+Poliglota is a local, offline translation and localization toolkit. It has
+minimal runtime dependencies (`defusedxml` for safe XML parsing and `PyYAML`
+for YAML support) and does not send data to any online service without explicit
+user action. There is no silent online fallback; models and tokenizers must be
+cached locally or explicitly downloaded by the user.
 
 ## Sensitive data
 

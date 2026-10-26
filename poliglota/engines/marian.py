@@ -266,7 +266,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         restored = text
         for position, tag in reversed(positions):
             insertion_index = max(0, min(len(restored), position))
-            restored = restored[:insertion_index] + f"<{tag}>" + restored[insertion_index:]
+            restored = restored[:insertion_index] + tag + restored[insertion_index:]
         return restored
 
     def _translate_with_model(self, texts: list[str]) -> list[str]:
@@ -310,15 +310,10 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         stripped_text, positions = self._strip_known_placeholders(text)
         start = time.perf_counter()
         translated = self._translate_with_model([stripped_text])[0]
-        restored = self._restore_known_placeholders(translated)
+        restored = self._restore_placeholders_at_positions(translated, positions)
         elapsed_ms = (time.perf_counter() - start) * 1000
         self._last_inference_time_ms = elapsed_ms
         self._model_info["last_inference_time_ms"] = round(elapsed_ms)
-
-        if positions:
-            for position, tag in reversed(positions):
-                insertion_index = max(0, min(len(restored), position))
-                restored = restored[:insertion_index] + f"<{tag}>" + restored[insertion_index:]
 
         if elapsed_ms > _INFERENCE_WARNING_MS:
             logger.warning(

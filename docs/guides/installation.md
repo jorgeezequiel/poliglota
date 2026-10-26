@@ -46,6 +46,21 @@ python -m pip install -e ".[gpu]"
 
 Inclui PyTorch, Transformers, Hugging Face Hub e sacremoses. É opcional e não altera a versão do pacote. Pesos, tokenizers e caches permanecem fora do repositório e precisam ser preparados localmente.
 
+### Windows + CUDA: instalação quebrada do PyTorch
+
+Se o ambiente tiver uma instalação corrompida do PyTorch (por exemplo, erro de DLL do CUDA/cuDNN como `cudnn_adv64_9.dll` ou a importação falhar com `OSError: [WinError 126]`), primeiro remova a instalação problemática do ambiente e recrie um virtualenv limpo antes de reinstalar a stack opcional.
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install --index-url https://download.pytorch.org/whl/cu126 "torch==2.7.1+cu126" "torchaudio==2.7.1+cu126" "torchvision==0.22.1+cu126"
+python -m pip install "transformers==5.20.2" "huggingface-hub>=1.31.0,<3" "tokenizers==0.23.3" "sacremoses==0.1.0"
+python -m pip install -e ".[dev,gpu]"
+```
+
+Essa sequência evita depender de um ambiente Python global já corrompido. O projeto mantém o extra `[gpu]` opcional, mas a instalação real do PyTorch precisa seguir a combinação compatível do runtime e da GPU disponível no Windows.
+
 ### Instalação sem rede
 
 Com `setuptools>=77` e `wheel` já disponíveis no ambiente:

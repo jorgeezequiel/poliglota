@@ -6,6 +6,7 @@ import contextlib
 import gc
 import logging
 import os
+import re
 import time
 from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 
@@ -65,6 +66,10 @@ class _ModelProtocol(Protocol):
 
 
 class _TokenizerProtocol(Protocol):
+    src_lang: str | None
+    tgt_lang: str | None
+    vocab: dict[str, int]
+
     def __call__(self, texts: list[str] | str, **kwargs: object) -> object: ...
     def batch_decode(self, tensors: object, skip_special_tokens: bool = True) -> list[str]: ...
 
@@ -123,12 +128,113 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
 
     @staticmethod
     def _normalize_lang_code(value: str) -> str:
-        """Normalize the language code to a two-letter root token."""
+        """Normalize the language code to a canonical root token."""
         code = (value or "").strip().lower().replace("_", "-")
         if not code:
             msg = "Language code is required for translation."
             raise ValueError(msg)
         return code.split("-", 1)[0]
+
+    def _resolve_target_lang_code(self, requested_lang: str, tokenizer: Any) -> str:
+        """Return the exact tokenizer language code for a requested locale.
+
+        mBART models expect lang codes in format: pt_XX, en_XX (language_REGION).
+        NLLB models expect lang codes in format: pt_Latn, en_Latn (language_SCRIPT).
+        Other models may use simple 2-letter codes: pt, en.
+        """
+        normalized = self._normalize_lang_code(requested_lang)
+
+        # For NLLB: check vocab directly (NLLB doesn't have lang_code_to_id)
+        if self._is_nllb_model():
+            iso639_3_map = {
+                "pt": "por",
+                "en": "eng",
+                "es": "spa",
+                "fr": "fra",
+                "de": "deu",
+                "it": "ita",
+                "ja": "jpn",
+                "zh": "zho",
+                "ko": "kor",
+            }
+            script_map = {
+                "pt": "Latn",
+                "en": "Latn",
+                "es": "Latn",
+                "fr": "Latn",
+                "de": "Latn",
+                "it": "Latn",
+                "ja": "Jpan",
+                "zh": "Hans",
+                "ko": "Hang",
+            }
+            iso639_3 = iso639_3_map.get(normalized, normalized)
+            script = script_map.get(normalized, "Latn")
+            candidates = [
+                f"{iso639_3}_{script}",
+                f"{normalized}_{script}",
+                requested_lang.strip(),
+                requested_lang.strip().replace("_", "-"),
+                normalized,
+                iso639_3,
+            ]
+            vocab = getattr(tokenizer, "vocab", {})
+            for candidate in candidates:
+                if candidate in vocab:
+                    logger.debug(
+                        "Resolved language code %r to %r for NLLB model",
+                        requested_lang,
+                        candidate,
+                    )
+                    return candidate
+            logger.warning(
+                "Could not resolve language code %r in NLLB vocab; using %r",
+                requested_lang,
+                iso639_3,
+            )
+            return iso639_3
+
+        # For mBART and others: use lang_code_to_id
+        lang_to_id = getattr(tokenizer, "lang_code_to_id", None)
+        if not isinstance(lang_to_id, dict):
+            return normalized
+
+        # For mBART: try pt_XX (most common), then regional variants, then base code.
+        if self._is_mbart_model():
+            candidates = [
+                f"{normalized}_XX",
+                f"{normalized}_PT",
+                f"{normalized}_BR",
+                f"{normalized}_US",
+                requested_lang.strip().upper().replace("-", "_"),
+                normalized,
+            ]
+        else:
+            candidates = [
+                requested_lang.strip(),
+                requested_lang.strip().replace("_", "-"),
+                normalized,
+                f"{normalized}_XX",
+                f"{normalized.upper()}_XX",
+            ]
+
+        for candidate in candidates:
+            if candidate in lang_to_id:
+                logger.debug(
+                    "Resolved language code %r to %r for model %s",
+                    requested_lang,
+                    candidate,
+                    self.model_name,
+                )
+                return candidate
+
+        logger.warning(
+            "Could not resolve language code %r in tokenizer for model %s; using %r",
+            requested_lang,
+            self.model_name,
+            normalized,
+        )
+        return normalized
 
     def _resolve_device(self, preferred: str) -> str:
         """Select the device, validating VRAM before choosing GPU."""
@@ -171,6 +277,14 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
 
         msg = f"Unsupported locale for PyTorch engine: {locale!r}"
         raise ValueError(msg)
+
+    def _is_mbart_model(self) -> bool:
+        """Check if the current model is mBART."""
+        return "mbart" in self.model_name.lower()
+
+    def _is_nllb_model(self) -> bool:
+        """Check if the current model is NLLB."""
+        return "nllb" in self.model_name.lower()
 
     def supports(self, source: object, target: object) -> bool:
         """Return whether the given language pair is supported."""
@@ -279,10 +393,6 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
                 return
             raise
 
-    def _is_mbart_model(self) -> bool:
-        """Return True for mBART-based models."""
-        return "mbart" in self.model_name.lower()
-
     def _prepare_texts(self, texts: list[str], source_lang: str, target_lang: str) -> list[str]:
         """Prepare the input strings for model generation."""
         normalized_source = self._normalize_lang_code(source_lang)
@@ -292,7 +402,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             value = str(text).strip()
             if not value:
                 continue
-            if self._is_mbart_model():
+            if self._is_mbart_model() or self._is_nllb_model():
                 prepared.append(value)
             else:
                 prepared.append(f"translate {normalized_source} to {normalized_target}: {value}")
@@ -310,15 +420,49 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         if not prepared:
             return []
 
+        if self._is_mbart_model():
+            source_lang_code = self._resolve_target_lang_code(source_lang, tokenizer)
+            self._resolve_target_lang_code(target_lang, tokenizer)
+            # mBART requires src_lang to be set as a tokenizer attribute, not as a kwarg
+            tokenizer.src_lang = source_lang_code
+            tokenizer_kwargs: dict[str, Any] = {
+                "return_tensors": "pt",
+                "padding": True,
+                "truncation": True,
+                "max_length": 512,
+            }
+            logger.debug(
+                "mBART tokenizer config: src_lang=%s (resolved from %s)",
+                source_lang_code,
+                source_lang,
+            )
+        elif self._is_nllb_model():
+            source_lang_code = self._resolve_target_lang_code(source_lang, tokenizer)
+            self._resolve_target_lang_code(target_lang, tokenizer)
+            # NLLB also requires src_lang as a tokenizer attribute
+            tokenizer.src_lang = source_lang_code
+            tokenizer_kwargs = {
+                "return_tensors": "pt",
+                "padding": True,
+                "truncation": True,
+                "max_length": 512,
+            }
+            logger.debug(
+                "NLLB tokenizer config: src_lang=%s (resolved from %s)",
+                source_lang_code,
+                source_lang,
+            )
+        else:
+            tokenizer_kwargs = {
+                "return_tensors": "pt",
+                "padding": True,
+                "truncation": True,
+                "max_length": 512,
+            }
+
         tokenized = cast(
             "dict[str, Any]",
-            tokenizer(
-                prepared,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=512,
-            ),
+            tokenizer(prepared, **tokenizer_kwargs),
         )
 
         if self.device in {"cuda", "mps"}:
@@ -331,10 +475,43 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         }
 
         if self._is_mbart_model():
-            lang_code = self._normalize_lang_code(target_lang)
+            lang_code = self._resolve_target_lang_code(target_lang, tokenizer)
             lang_to_id = getattr(tokenizer, "lang_code_to_id", None)
             if lang_to_id is not None and lang_code in lang_to_id:
                 generation_kwargs["forced_bos_token_id"] = lang_to_id[lang_code]
+                logger.debug(
+                    "mBART generation: forced_bos_token_id=%s for target lang %s",
+                    lang_to_id[lang_code],
+                    lang_code,
+                )
+            elif lang_to_id is not None and self._normalize_lang_code(target_lang) in lang_to_id:
+                normalized = self._normalize_lang_code(target_lang)
+                generation_kwargs["forced_bos_token_id"] = lang_to_id[normalized]
+                logger.debug(
+                    "mBART generation: forced_bos_token_id=%s for normalized lang %s",
+                    lang_to_id[normalized],
+                    normalized,
+                )
+        elif self._is_nllb_model():
+            lang_code = self._resolve_target_lang_code(target_lang, tokenizer)
+            # NLLB tokenizer stores language tokens in vocab, not in lang_code_to_id
+            if hasattr(tokenizer, "vocab") and lang_code in tokenizer.vocab:
+                token_id = tokenizer.vocab[lang_code]
+                generation_kwargs["forced_bos_token_id"] = token_id
+                # NLLB: SET tgt_lang attribute for proper decoding
+                if hasattr(tokenizer, "tgt_lang"):
+                    tokenizer.tgt_lang = lang_code
+                logger.debug(
+                    "NLLB generation: forced_bos_token_id=%s for target lang %s",
+                    token_id,
+                    lang_code,
+                )
+            else:
+                logger.warning(
+                    "NLLB: Could not resolve target language code %r in vocab "
+                    "for forced_bos_token_id",
+                    lang_code,
+                )
 
         started_at = time.perf_counter()
         try:
@@ -357,8 +534,33 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             else:
                 raise
 
-        decoded = tokenizer.batch_decode(generated, skip_special_tokens=True)
-        result = [str(value).strip() for value in decoded]
+        # mBART and NLLB handle decoding differently:
+        # - mBART: language tokens (en_XX, pt_XX) are not in special_tokens list,
+        #   so skip_special_tokens=True corrupts output. Must decode without skipping
+        #   and strip manually.
+        # - NLLB: language tokens (eng_Latn, por_Latn) ARE in special_tokens list,
+        #   so skip_special_tokens=True removes them automatically and produces
+        #   clean output.
+        if self._is_mbart_model():
+            decoded = tokenizer.batch_decode(generated, skip_special_tokens=False)
+            result = []
+            for decoded_text in decoded:
+                text = str(decoded_text).strip()
+                text = text.replace("</s>", "").strip()
+                # Strip language tokens at start: en_XX, pt_XX (mBART format)
+                text = re.sub(
+                    r"^[a-z]{2,3}(?:_[A-Z][a-z]*|_[A-Z]{2})\s+", "", text
+                ).strip()
+                result.append(text)
+        elif self._is_nllb_model():
+            # NLLB special tokens are properly recognized, so skip_special_tokens=True
+            # works correctly and removes language tokens (eng_Latn, por_Latn, etc.)
+            # automatically during tokenization. No post-decode regex stripping needed.
+            decoded = tokenizer.batch_decode(generated, skip_special_tokens=True)
+            result = [str(value).strip() for value in decoded]
+        else:
+            decoded = tokenizer.batch_decode(generated, skip_special_tokens=True)
+            result = [str(value).strip() for value in decoded]
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         self._last_inference_time_ms = elapsed_ms
         self._model_info["last_inference_time_ms"] = round(elapsed_ms)
@@ -476,9 +678,10 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             if hasattr(torch.cuda, "empty_cache"):
                 torch.cuda.empty_cache()
             # MPS (Metal Performance Shaders) is only available on macOS
-            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            mps_module = getattr(torch, "mps", None)
+            if mps_module is not None and hasattr(mps_module, "empty_cache"):
                 with contextlib.suppress(RuntimeError):
-                    torch.mps.empty_cache()
+                    mps_module.empty_cache()
 
         gc.collect()
         self.device = "cpu"

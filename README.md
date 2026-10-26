@@ -102,10 +102,38 @@ Se `--model` for omitido, o motor padrão é escolhido automaticamente para o pa
 
 ## Tradução local, modelos e offline
 
-- Motores disponíveis: `marian` (padrão) e `pytorch`. A variável `POLIGLOTA_ENGINE` define o padrão.
+### Motores disponíveis
+
+Três motores de tradução estão disponíveis:
+
+- **`marian`** (padrão) — Modelo Marian NMT via Helsinki-NLP. Rápido, leve, suporta pares `en↔es`, `en↔fr`, `en↔pt`.
+- **`pytorch`** — Modelos PyTorch via Transformers/Hugging Face:
+  - **mBART** (`facebook/mbart-large-50-many-to-many-mmt`) — GPU (CUDA/MPS), suporta 50+ idiomas, incluindo PT-BR.
+  - **NLLB** (`facebook/nllb-200-distilled-600M`) — CPU/GPU, suporta 200 idiomas via ISO 639-3, inclui `en`, `pt`, `es`, `fr`, `de`, `it`, `ja`, `zh`, `ko`.
+
+A variável `POLIGLOTA_ENGINE` define o motor padrão (`marian` ou `pytorch`). Se omitida, o motor é escolhido automaticamente para o par de idiomas.
+
+### Processamento de corpus YAML
+
+Exemplo: tradução completa de corpus PazCall (6 arquivos YAML, 11 idiomas-alvo, ambos mBART GPU + NLLB CPU):
+
+```bash
+# Script de exemplo (processamento bilíngue PT-BR → ES com ambos motores):
+python translate_pazcall_corpus.py
+```
+
+**Resultado validado:**
+- ✓ mBART GPU: 44/58 strings traduzidas (PT-BR → ES-ES); non_translatable preservados (app_name, app_version, 11× language_name_*).
+- ✓ NLLB CPU: 44/58 strings traduzidas (PT-BR → ES); mesma estrutura, placeholders intactos.
+- ✓ Tempo total: 283.77s (GPU load + ambos motores).
+- ✓ UTF-8 + estrutura YAML validados.
+
+### Configuração e offline
+
 - Nenhum modelo é baixado automaticamente pelo repositório, pela instalação ou pela suíte de testes.
-- Para uso offline, prepare o cache local e defina `HF_HUB_OFFLINE=1`. Sem o modelo em cache, o comando falha com mensagem explícita em vez de continuar silenciosamente.
+- **Offline obrigatório:** Para uso offline, prepare o cache local **antes** da execução e defina `HF_HUB_OFFLINE=1`. Sem o modelo em cache e com `HF_HUB_OFFLINE=0` (padrão), o Hugging Face Hub será contactado. Sem o modelo em cache, o comando falha com mensagem explícita em vez de continuar silenciosamente.
 - O modo offline aceita apenas modelos já presentes no cache do Hugging Face (`HF_HOME` ou `~/.cache/huggingface`).
+- **Nota sobre `translate`:** O comando `translate` aceita **texto posicional** (não arquivos de recursos). Ele traduz texto único ou em lotes; para sincronizar e traduzir arquivos de localização, use `sync` + `validate` após preparar o modelo.
 
 ### Dispositivos
 

@@ -32,8 +32,14 @@ def mock_environ(monkeypatch: pytest.MonkeyPatch) -> Callable[[str | None], None
 
 
 @pytest.mark.unit
-def test_select_default_motor_m2m_supported() -> None:
-    assert cli_module._select_default_motor("pt_BR", "en_US") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+def test_select_default_motor_supported_direction() -> None:
+    assert cli_module._select_default_motor("en_US", "pt_BR") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+
+
+@pytest.mark.unit
+def test_select_default_motor_rejects_reverse_direction() -> None:
+    with pytest.raises(ValueError, match="Unsupported default motor pair"):
+        cli_module._select_default_motor("pt_BR", "en_US")
 
 
 @pytest.mark.unit
@@ -62,6 +68,13 @@ def test_select_default_motor_env_override(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.unit
+def test_normalize_locale_code_handles_dashes_and_case() -> None:
+    assert cli_module._normalize_locale_code("pt-BR") == "pt_BR"
+    assert cli_module._normalize_locale_code("en-us") == "en_US"
+    assert cli_module._locale_to_engine_code("pt-BR") == "pt"
+
+
+@pytest.mark.unit
 def test_select_default_motor_offline_mode_skips_missing_m2m_cache(
     mock_environ: Callable[[str | None], None],
     mock_hf_cache_path: Path,
@@ -79,6 +92,18 @@ def test_verify_offline_with_cache_present(
 ) -> None:
     mock_environ("1")
     cache_dir = mock_hf_cache_path / "hub" / "facebook--m2m100_418M"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    assert cli_module._verify_offline_capability("facebook/m2m100_418M") is True
+
+
+@pytest.mark.unit
+def test_verify_offline_with_real_hf_layout_cache_present(
+    mock_environ: Callable[[str | None], None],
+    mock_hf_cache_path: Path,
+) -> None:
+    mock_environ("1")
+    cache_dir = mock_hf_cache_path / "hub" / "models--facebook--m2m100_418M"
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     assert cli_module._verify_offline_capability("facebook/m2m100_418M") is True

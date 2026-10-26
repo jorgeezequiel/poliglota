@@ -7,6 +7,7 @@ import importlib
 import json
 import logging
 import os
+import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("poliglota.cli")
 
+
+def _configure_console_encoding() -> None:
+    """Force UTF-8 text IO when the terminal is configured for a legacy code page."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError, OSError):
+                continue
+
+
 _DEFAULT_MOTOR_PRIORITY = (
     "Helsinki-NLP/opus-mt-en-es",
     "Helsinki-NLP/opus-mt-en-fr",
@@ -37,6 +50,12 @@ _DEFAULT_MOTOR_LANGUAGE_SETS = {
     "Helsinki-NLP/opus-mt-en-es": {"en", "es"},
     "Helsinki-NLP/opus-mt-en-fr": {"en", "fr"},
     "Helsinki-NLP/opus-mt-tc-big-en-pt": {"en", "pt"},
+}
+
+_DEFAULT_MOTOR_DIRECTIONS = {
+    "Helsinki-NLP/opus-mt-en-es": ("en", "es"),
+    "Helsinki-NLP/opus-mt-en-fr": ("en", "fr"),
+    "Helsinki-NLP/opus-mt-tc-big-en-pt": ("en", "pt"),
 }
 
 PHASE_D_BENCHMARKS: dict[str, dict[str, float]] = {
@@ -451,11 +470,25 @@ def _run_list_locales(root: Path, format_name: str) -> int:
     return 0
 
 
+def _normalize_locale_code(locale: str) -> str:
+    """Normalize locale aliases like ``pt_BR`` and ``pt-BR`` into a canonical form."""
+    if not locale:
+        return ""
+    normalized = locale.strip().replace("-", "_")
+    if "_" not in normalized:
+        return normalized.lower()
+    language, region = normalized.split("_", 1)
+    return f"{language.lower()}_{region.upper()}"
+
+
 def _locale_to_engine_code(locale: str) -> str:
     """Convert a Poliglota locale like ``pt_BR`` into a Marian language code."""
-    if not locale or "_" not in locale:
-        return locale.strip()
-    return locale.split("_", 1)[0].strip().lower()
+    normalized = _normalize_locale_code(locale)
+    if not normalized:
+        return ""
+    if "_" not in normalized:
+        return normalized.lower()
+    return normalized.split("_", 1)[0].strip().lower()
 
 
 def _translate_with_placeholders(
@@ -542,50 +575,41 @@ def _translate_with_placeholders(
 def _verify_offline_capability(model_name: str) -> bool:
     """Check whether a Hugging Face model is already cached for offline use.
 
-    This is a pre-flight validation step used before trying to load a Marian model.
-    It does not download anything; it only checks the local hub cache used by the
-    Hugging Face ecosystem.
-
-    Args:
-        model_name: Hugging Face model identifier such as ``facebook/m2m100_418M``.
-
-    Returns:
-        ``True`` when the model cache directory exists locally; otherwise ``False``.
-
-    Raises:
-        RuntimeError: If ``HF_HUB_OFFLINE=1`` and the required cache directory is missing.
-
-    Examples:
-        >>> _verify_offline_capability("facebook/m2m100_418M")
-        True
-        >>> _verify_offline_capability("facebook/unknown-model")
-        False
-
+    The real Hugging Face Hub layout stores cached models under ``HF_HOME/hub`` using
+    the transformed directory name ``models--org--repo`` (for example,
+    ``models--facebook--m2m100_418M``), not the raw repo slug with a single slash.
+    This helper normalizes both the legacy flat cache name and the real hub layout
+    before deciding whether a model is available offline.
     """
     hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
-    model_cache_name = model_name.replace("/", "--")
-    cache_dir = hf_home / "hub" / model_cache_name
-    cache_exists = cache_dir.exists()
+    candidate_names = {model_name.replace("/", "--")}
+    if model_name.count("/") == 1:
+        org, repo = model_name.split("/", 1)
+        candidate_names.add(f"models--{org}--{repo}")
+    cache_dirs = [hf_home / "hub" / name for name in sorted(candidate_names)]
+    cache_exists = any(path.exists() for path in cache_dirs)
     offline_mode = os.environ.get("HF_HUB_OFFLINE") == "1"
 
     if offline_mode and not cache_exists:
         logger.warning(
-            "Offline mode is enabled but the model cache is missing for '%s' at '%s'.",
+            "Offline mode is enabled but the model cache is missing for '%s' under '%s'.",
             model_name,
-            cache_dir,
+            hf_home / "hub",
         )
         msg = "Model cache not available for offline mode"
         raise RuntimeError(msg)
 
     if cache_exists:
         logger.info(
-            "Offline capability verified for model '%s' in cache '%s'.", model_name, cache_dir
+            "Offline capability verified for model '%s' in cache '%s'.",
+            model_name,
+            next(path for path in cache_dirs if path.exists()),
         )
     else:
         logger.info(
-            "Offline capability check for model '%s': cache not found at '%s'.",
+            "Offline capability check for model '%s': cache not found under '%s'.",
             model_name,
-            cache_dir,
+            hf_home / "hub",
         )
     return cache_exists
 
@@ -760,17 +784,21 @@ def _select_default_motor(source_lang: str, target_lang: str) -> str:
 
     def _model_in_cache(model_name: str) -> bool:
         cache_root = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
-        cache_key = model_name.replace("/", "--")
-        return (cache_root / "hub" / cache_key).exists()
+        candidate_names = {model_name.replace("/", "--")}
+        if "/" in model_name:
+            org, repo = model_name.split("/", 1)
+            candidate_names.add(f"models--{org}--{repo}")
+        return any((cache_root / "hub" / name).exists() for name in candidate_names)
 
-    def _can_use(model_name: str, supported_languages: set[str]) -> bool:
-        if source_code not in supported_languages or target_code not in supported_languages:
+    def _can_use(model_name: str, direction: tuple[str, str]) -> bool:
+        expected_source, expected_target = direction
+        if source_code != expected_source or target_code != expected_target:
             return False
         return not (offline_mode and not _model_in_cache(model_name))
 
     for model in _DEFAULT_MOTOR_PRIORITY:
-        supported = _DEFAULT_MOTOR_LANGUAGE_SETS.get(model, set())
-        if _can_use(model, supported):
+        direction = _DEFAULT_MOTOR_DIRECTIONS.get(model, ("", ""))
+        if direction and _can_use(model, direction):
             logger.info("Selected default motor: %s", model)
             return model
 
@@ -971,6 +999,7 @@ def _run_translate(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected command and return the process exit code."""
+    _configure_console_encoding()
     parser = _build_parser()
     args = parser.parse_args(argv)
 

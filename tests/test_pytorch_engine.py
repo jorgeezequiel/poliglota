@@ -79,6 +79,16 @@ def model_instance() -> PyTorchTranslationEngine:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+def test_mbart_locale_code_uses_tokenizer_specific_variant() -> None:
+    engine = PyTorchTranslationEngine("facebook/mbart-large-50-many-to-many-mmt", device="cpu")
+    tokenizer = type("FakeTokenizer", (), {"lang_code_to_id": {"en_XX": 256, "pt_XX": 257}})()
+
+    assert engine._resolve_target_lang_code("pt_BR", tokenizer) == "pt_XX"
+    assert engine._resolve_target_lang_code("en_US", tokenizer) == "en_XX"
+    assert engine._resolve_target_lang_code("pt", tokenizer) == "pt_XX"
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
 def test_device_detection_prefers_gpu_if_available() -> None:
     with (
         patch("poliglota.engines.pytorch_engine.detect_device", return_value="cuda"),

@@ -25,9 +25,9 @@ poliglota/
 │   └── quality.py      # quality-related contracts
 ├── formats/       # concrete readers/writers for localization formats
 │   ├── arb.py          # ARB: parsing, discovery, validation, sync, adapter
-│   ├── json_adapter.py # JSON adapter
-│   ├── yaml_adapter.py # YAML adapter
-│   ├── xml_adapter.py  # XML adapter (defusedxml)
+│   ├── json.py         # JSON adapter
+│   ├── yaml.py         # YAML adapter
+│   ├── xml.py          # XML adapter (defusedxml)
 │   └── registry_init.py # runtime adapter registry
 ├── engines/       # local translation engines and support utilities
 │   ├── marian.py       # Marian/Opus-MT adapter

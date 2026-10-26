@@ -38,7 +38,7 @@ This document provides a comprehensive overview of Poliglota's current capabilit
 | `--device cuda` | Windows, Linux | ❌ None | ✅ Fails if CUDA unavailable | Production GPU-required workflows | Implemented in code |
 | `--device mps` | macOS | ❌ None | ✅ Fails if MPS unavailable | Apple Silicon GPU inference | Implemented in code |
 | `--device cpu` | All | ❌ None | ❌ Never fails | CPU-only, low-resource environments | Implemented in code |
-| `--device gpu` | All | ✅ Alias for auto | ❌ Never fails | Shorthand for GPU auto-selection | Implemented in code |
+| `--device gpu` | All | ✅ Alias for auto (same as `--device auto`) | ❌ Never fails | Shorthand for GPU auto-selection; tries CUDA → MPS → CPU | Implemented in code |
 
 ### GPU Support Status
 
@@ -79,8 +79,8 @@ This document provides a comprehensive overview of Poliglota's current capabilit
    - `sacremoses>=0.1.0`
 
 3. **Supported language pairs:**
-   - Marian engine: Helsinki-NLP Opus-MT language pairs (e.g., `pt_BR` → `en_US`, `fr` → `de`)
-   - PyTorch engine: Any model supporting source/target language codes
+    - Marian engine: Helsinki-NLP Opus-MT language pairs. Default model selection covers only `en`, `es`, `fr`, `pt` combinations (see `_SUPPORTED_PAIRS` in `poliglota/cli.py`). Other pairs require explicit `--model` specification.
+    - PyTorch engine: Any model supporting source/target language codes
 
 4. **Device compatibility:**
    - CPU: Always available
