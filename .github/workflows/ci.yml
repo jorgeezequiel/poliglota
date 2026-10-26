@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  quality:
+    name: Lint, formatação e versão
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependências de desenvolvimento
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Ruff (lint)
+        run: python -m ruff check poliglota tests
+
+      - name: Ruff (formatação)
+        run: python -m ruff format --check poliglota tests
+
+      - name: Consistência de versão
+        run: python -m pytest tests/test_version_consistency.py -v
+
+  tests:
+    name: Testes (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Instalar dependências de desenvolvimento
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Validar pacote instalado
+        shell: python
+        run: |
+          import importlib.metadata as md
+          from pathlib import Path
+
+          import poliglota
+
+          expected = Path("VERSION").read_text(encoding="utf-8").strip()
+          installed = md.version("poliglota")
+          assert poliglota.__version__ == installed == expected, (
+              poliglota.__version__,
+              installed,
+              expected,
+          )
+          print(f"poliglota {installed} (VERSION {expected})")
+
+      - name: Criar diretório de relatórios
+        run: python -c "from pathlib import Path; Path('reports/test-results').mkdir(parents=True, exist_ok=True)"
+
+      - name: Executar testes
+        run: >
+          python -m pytest -q
+          --junitxml=reports/test-results/junit-${{ matrix.os }}-py${{ matrix.python-version }}.xml
+
+      - name: Publicar resultados JUnit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: reports/test-results/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Resumo dos resultados
+        if: always()
+        shell: python
+        run: |
+          import glob
+          import os
+          import xml.etree.ElementTree as ET
+
+          files = sorted(glob.glob("reports/test-results/*.xml"))
+          total = failures = errors = skipped = 0
+          for path in files:
+              root = ET.parse(path).getroot()
+              suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+              for suite in suites:
+                  total += int(suite.get("tests", 0))
+                  failures += int(suite.get("failures", 0))
+                  errors += int(suite.get("errors", 0))
+                  skipped += int(suite.get("skipped", 0))
+
+          lines = [
+              "## Resultados dos testes",
+              "",
+              f"- Arquivos JUnit: {len(files)}",
+              f"- Total: {total}",
+              f"- Falhas: {failures}",
+              f"- Erros: {errors}",
+              f"- Ignorados: {skipped}",
+          ]
+          text = "\n".join(lines) + "\n"
+          print(text)
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as handle:
+                  handle.write(text)
+
+          if total == 0 or failures or errors:
+              raise SystemExit(1)

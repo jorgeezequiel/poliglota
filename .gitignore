@@ -1,0 +1,185 @@
+
+# ============================================================
+# POLIGLOTA — Python, tradução offline e múltiplos formatos
+# ============================================================
+
+# ----------------------------
+# Python: ambientes virtuais
+# ----------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# ----------------------------
+# Python: caches e bytecode
+# ----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.tox/
+.nox/
+.hypothesis/
+
+# ----------------------------
+# Python: builds e distribuição
+# ----------------------------
+build/
+dist/
+site/
+.eggs/
+*.egg
+*.egg-info/
+wheels/
+pip-wheel-metadata/
+
+# ----------------------------
+# Cobertura e testes
+# ----------------------------
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+nosetests.xml
+junit.xml
+test-results/
+.pyre/
+
+# ----------------------------
+# IDEs e editores
+# ----------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+
+# Ferramentas locais de desenvolvimento
+/.codegraph/
+/.omo/
+
+# Cache de testes Python
+/.pytest_cache/
+
+# Relatórios internos ficam fora do Git por política do projeto
+# (ver docs/development/internal-reports.md). A regra efetiva é
+# "reports/" na seção de resultados locais, mais abaixo.
+
+# ----------------------------
+# Variáveis de ambiente e segredos
+# ----------------------------
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Chaves e certificados privados
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+
+# ----------------------------
+# Logs e arquivos temporários
+# ----------------------------
+*.log
+logs/
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# ----------------------------
+# Configurações locais
+# ----------------------------
+*.local
+*.local.*
+config.local.*
+settings.local.*
+
+# ----------------------------
+# Modelos e recursos offline
+# ----------------------------
+# Modelos de tradução podem ocupar muitos GB.
+# Distribua instruções de instalação e download,
+# não os modelos pesados no Git.
+#
+# Ignoramos diretórios dedicados a modelos e extensões que são,
+# na prática, sempre artefatos de modelo. NÃO ignoramos extensões
+# genéricas como .bin/.json/.txt: elas podem ser código,
+# documentação, fixtures ou testes legítimos do projeto.
+models/
+model_cache/
+model-cache/
+checkpoints/
+weights/
+*.onnx
+*.gguf
+*.safetensors
+*.pt
+*.pth
+
+# Cache de bibliotecas e downloads
+.cache/
+.cache-*/
+huggingface_cache/
+transformers_cache/
+downloads/
+download_cache/
+
+# ----------------------------
+# Resultados e relatórios locais
+# ----------------------------
+# Relatórios de auditoria/fase são internos e não devem ser publicados
+# (ver docs/development/internal-reports.md). Não há exceção para reports/:
+# mantenha-os apenas no disco local.
+reports/
+results/
+output/
+outputs/
+artifacts/
+*.report.json
+*.report.csv
+
+# ----------------------------
+# Arquivos de tradução temporários
+# ----------------------------
+# Não ignore *.arb ou *.xml globalmente.
+# Arquivos de exemplo e fixtures devem ser públicos.
+
+*.arb.tmp
+*.arb.bak
+*.xml.tmp
+*.xml.bak
+
+# ----------------------------
+# Bancos de dados locais
+# ----------------------------
+*.sqlite
+*.sqlite3
+*.db
+
+# ----------------------------
+# Sistema operacional
+# ----------------------------
+.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+ehthumbs.db
+Desktop.ini
+
+# ----------------------------
+# Git: arquivos locais auxiliares
+# ----------------------------
+*.patch
+*.stackdump

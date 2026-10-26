@@ -1,0 +1,80 @@
+{
+  "version": "1.0",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "description": "Registry of supported translation models for Poliglota",
+  "models": {
+    "facebook/m2m100_418M": {
+      "hf_model_id": "facebook/m2m100_418M",
+      "hf_url": "https://huggingface.co/facebook/m2m100_418M",
+      "model_type": "seq2seq",
+      "framework": "transformers",
+      "version": "main",
+      "license": "MIT",
+      "size_mb": 418,
+      "language_pairs": [
+        "pt->de",
+        "pt->ja",
+        "pt->ko",
+        "pt->pl",
+        "pt->ru",
+        "pt->it"
+      ],
+      "gpu_compatible": true,
+      "offline_capable": true,
+      "notes": "Multilingual 418M model; direct pt->all 6 targets; requires sentencepiece tokenizer",
+      "tested_on": "poliglota FASE 3 stress test",
+      "cached_at": null
+    },
+    "Helsinki-NLP/opus-mt-tc-big-en-pt": {
+      "hf_model_id": "Helsinki-NLP/opus-mt-tc-big-en-pt",
+      "hf_url": "https://huggingface.co/Helsinki-NLP/opus-mt-tc-big-en-pt",
+      "model_type": "seq2seq",
+      "framework": "transformers",
+      "version": "main",
+      "license": "Apache-2.0",
+      "size_mb": 189,
+      "language_pairs": [
+        "en->pt"
+      ],
+      "gpu_compatible": true,
+      "offline_capable": true,
+      "notes": "Existing OPUS-MT model for English->Portuguese",
+      "tested_on": "poliglota FASE 2 tests",
+      "cached_at": null
+    },
+    "Helsinki-NLP/opus-mt-en-es": {
+      "hf_model_id": "Helsinki-NLP/opus-mt-en-es",
+      "hf_url": "https://huggingface.co/Helsinki-NLP/opus-mt-en-es",
+      "model_type": "seq2seq",
+      "framework": "transformers",
+      "version": "main",
+      "license": "Apache-2.0",
+      "size_mb": 189,
+      "language_pairs": [
+        "en->es"
+      ],
+      "gpu_compatible": true,
+      "offline_capable": true,
+      "notes": "Existing OPUS-MT model for English->Spanish",
+      "tested_on": "poliglota FASE 2 tests",
+      "cached_at": null
+    },
+    "Helsinki-NLP/opus-mt-en-fr": {
+      "hf_model_id": "Helsinki-NLP/opus-mt-en-fr",
+      "hf_url": "https://huggingface.co/Helsinki-NLP/opus-mt-en-fr",
+      "model_type": "seq2seq",
+      "framework": "transformers",
+      "version": "main",
+      "license": "Apache-2.0",
+      "size_mb": 189,
+      "language_pairs": [
+        "en->fr"
+      ],
+      "gpu_compatible": true,
+      "offline_capable": true,
+      "notes": "Existing OPUS-MT model for English->French",
+      "tested_on": "poliglota FASE 2 tests",
+      "cached_at": null
+    }
+  }
+}

@@ -1,0 +1,98 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poliglota"
+version = "0.0.1"
+description = "Localization toolkit: ARB validation/sync with a framework-agnostic core"
+authors = [{ name = "Jorge Ezequiel de Lima Santos" }]
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "defusedxml>=0.7.1",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+poliglota = "poliglota.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff",
+]
+gpu = [
+    "torch>=2.7.0",
+    "transformers>=5.20.0",
+    "huggingface-hub>=0.20.0",
+    "sacremoses>=0.1.0",
+]
+
+[tool.setuptools]
+packages = ["poliglota", "poliglota.core", "poliglota.formats", "poliglota.quality", "poliglota.engines"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+filterwarnings = ["error"]
+markers = [
+    "unit: unit tests for isolated behavior",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "CPY001",
+    "FBT001",
+    "FBT002",
+    "TD002",
+    "TD003",
+    "FIX002",
+    # Optional YAML/XML/ML imports stay lazy to keep the import path light.
+    "PLC0415",
+    # JSON/protocol boundaries intentionally accept Any for compatibility.
+    "ANN401",
+    # CLI and adapter entry points intentionally expose wider public signatures.
+    "PLR0913",
+    "PLR0917",
+    # Dispatch and device-selection code is intentionally explicit for clarity.
+    "C901",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+    # Module-level registries are explicit singleton hooks.
+    "PLW0603",
+    # Domain thresholds are clear at the call site and intentionally descriptive.
+    "PLR2004",
+    # Invalid document payloads are documented as ValueError contract violations.
+    "TRY004",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The CLI's stdout output is its user interface, not debug logging.
+"poliglota/cli.py" = ["T201"]
+# Test modules are intentionally not a package (pytest imports them by path).
+"tests/**/*.py" = [
+    "S101",
+    "ARG",
+    "PLR2004",
+    "SLF001",
+    "D",
+    "INP001",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
