@@ -1,501 +1,674 @@
 # ROADMAP do Poliglota
 
-## 1. Visão e escopo
-
-### Problema resolvido
-O Poliglota resolve um problema específico de engenharia de localização: validar, sincronizar e traduzir arquivos de recursos de forma local, com arquitetura desacoplada entre formatos, engines e CLI. O projeto não tenta ser uma plataforma genérica de tradução; ele foca em arquivos de localização, mantendo a lógica de formato separada da aplicação consumidora.
-
-### Público-alvo
-O produto se destina a usuários técnicos e não técnicos que precisam lidar com recursos de localização em múltiplos idiomas, especialmente em projetos que exigem consistência entre chaves, placeholders e conteúdo estruturado. O foco é uso local e controle do ambiente, incluindo a possibilidade de trabalhar com modelos já disponíveis no ambiente do usuário.
-
-### O que o produto pretende ser
-O Poliglota pretende continuar sendo uma ferramenta:
-
-- gratuita e de código aberto;
-- leve, com consumo proporcional ao necessário;
-- apropriada para tradução local de arquivos de localização;
-- melhor do que simples substituição literal ou tradução mecânica;
-- capaz de operar offline quando o modelo e os recursos necessários já estiverem disponíveis localmente;
-- adequada à linha de comando e, em uma etapa posterior, a uma interface gráfica adicional;
-- modular para admitir novos formatos quando houver necessidade real e manutenção adequada;
-- econômica em armazenamento, RAM, CPU e memória de GPU, dando prioridade a modelos compactos quando a qualidade for satisfatória;
-- transparente sobre modelos, recursos, limitações e efeitos que podem modificar arquivos.
-
-### Fora de escopo
-O escopo atual e previsto não inclui:
-
-- serviços de tradução em nuvem;
-- assinaturas ou cobrança por uso;
-- backend remoto ou orquestração centralizada;
-- gestão de projetos, colaboração em nuvem, conteúdo editorial ou processos empresariais fora da tradução de arquivos de localização;
-- suporte genérico a todos os formatos de conteúdo do mercado, sem necessidade real e manutenção adequada;
-- downloads automáticos de modelos, execução silenciosa em rede ou dependência de infraestrutura externa para funcionamento normal.
-
-### Por que a CLI continua sendo uma interface oficial
-A CLI é uma interface oficial porque ela é a base de funcionalidade que a aplicação já expõe em código e documentação: validação, sincronização e tradução local. A arquitetura do projeto separa contratos de formato e motor da camada de comando, e a CLI funciona como a superfície principal de uso, integração em scripts e automação de tarefas. A interface gráfica, quando surgir, deve ser complementar e não substituir a execução por terminal. Isso preserva compatibilidade, automação, reprodução em ambientes headless e uso em máquinas sem interface gráfica.
+**Versão do documento:** 2.1
+**Versão do produto:** `0.0.1` (inalterada)
+**Data de referência:** 2026-10-26
+**Natureza deste documento:** análise e planejamento. Não descreve código que ainda não existe como se existisse, não autoriza implementação e não altera a versão do projeto.
+**Revisão 2.1:** corrige três afirmações da versão 2.0 refutadas na reauditoria — (a) a árvore de trabalho não estava limpa; (b) `--device gpu` é estrito no código **e** na documentação pública; (c) o defeito de cache offline deixou de ser hipótese e passou a fato verificado. Acrescenta defeitos encontrados na reauditoria (sync multiarquivo em JSON/YAML/XML, duplicação de placeholders no Marian, whitelist de modelos, conflitos internos da documentação) e atualiza o escopo das Fases 0 e 2.
 
 ---
 
-## 2. Estado atual do projeto
+## Regras de evidência usadas neste documento
 
-### Estágio geral
-O repositório está em estágio experimental, correspondente à versão `0.0.1`. A versão atual explícita no projeto é 0.0.1 e o estado documental indica desenvolvimento ativo, sem release pública e sem estabilidade de API garantida. A arquitetura existente é funcional e estruturada, mas não deve ser considerada comprovadamente madura em qualidade de tradução ou robustez de produção.
+Toda afirmação sobre o estado do projeto é classificada em uma das três categorias abaixo. Nenhuma fase pode ser aprovada com base em inferência, relatório não versionado ou expectativa.
 
-### 2.1 Arquitetura e organização do código
-Estado comprovado:
+| Classificação | Significado |
+|---|---|
+| **Fato verificado** | Comprovado por arquivo versionado, comando executado ou teste reproduzível nesta data. |
+| **Hipótese** | Indício forte em código ou documentação, ainda sem reprodução controlada. Não pode fundamentar aprovação. |
+| **Pendente** | Não foi possível verificar nesta análise. Exige validação antes de ser usado como critério. |
 
-- O pacote `poliglota` possui módulos bem separados por responsabilidade: `core`, `formats`, `engines`, `quality`, `gpu`, `config` e `cli`.
-- A arquitetura do código segue o conceito de contratos independentes de formato e motor, com interfaces e protocolos centrais em `poliglota/core`.
-- O projeto implementa adaptadores para ARB, JSON, YAML e XML, além de uma estrutura de registro de adaptadores em `poliglota/formats`.
-- A CLI expõe comandos `validate`, `sync`, `list-locales` e `translate` e realiza a ligação entre adaptadores, validação e motor de tradução.
-- O pacote inclui utilitários de qualidade para checklist de placeholders e glossário, além de validação funcional de chaves e conteúdos.
+Fonte de evidência preferencial: repositório versionado (`git`), comandos reproduzíveis no ambiente do projeto e resultados de teste com saída registrada. Relatórios em `reports/` são **ignorados pelo Git** (`.gitignore`), não fazem parte do artefato distribuído e não podem ser a única prova de aprovação de uma fase.
 
-O que isso significa:
+**Comandos executados na revisão 2.1 (saída literal resumida):**
 
-- O núcleo do projeto está organizado de forma coerente e modular.
-- A separação de camadas é claramente um objetivo implementado, mas isso não equivale a maturidade funcional ou a qualidade de tradução validada.
+| Comando | Resultado |
+|---|---|
+| `python -m pytest -q --no-header` | `238 passed, 8 skipped in 1.80s` (Python 3.13.11) |
+| `python -m ruff check poliglota tests` | `All checks passed!` |
+| `python -m ruff format --check poliglota tests` | `47 files already formatted` |
+| Inspeção do cache HF real | `models--Helsinki-NLP--opus-mt-en-es` presente em `~/.cache/huggingface/hub` |
+| `_verify_offline_capability(..., HF_HUB_OFFLINE=1)` | `RuntimeError: Model cache not available for offline mode` |
 
-### 2.2 Formatos de arquivos e maturidade
-Estado comprovado:
-
-- ARB é a implementação de referência e a mais completa: há suporte explícito para parsing, validação, sincronização e tradução.
-- JSON, YAML e XML são suportados por adaptadores registrados, mas têm maturidade inferior ao ARB e operações genéricas em alguns fluxos.
-- CSV e Gettext não têm adaptadores implementados.
-- A documentação e as limitações do repositório indicam que YAML, JSON e XML estão em estágio experimental ou parcialmente validado, não como formatos maduros de produção.
-
-Conclusão:
-
-- A base de formatos é viável e útil.
-- O suporte não é uniforme entre formatos.
-- A expansão de formatos deve seguir necessidade real e validação, não uma promessa de cobertura completa.
-
-### 2.3 Motores e modelos de tradução
-Estado comprovado:
-
-- O projeto implementa motores locais opcionais: Marian e PyTorch.
-- O fluxo local depende do extra opcional `[gpu]` e exige modelos já disponíveis localmente, sem download automático.
-- A CLI suporta seleção de engine e dispositivo (`auto`, `cpu`, `cuda`, `mps`, `gpu`) e o comportamento é documentado como permissivo em `auto` e estrito quando um dispositivo é pedido explicitamente.
-- Há uma política clara de offline: o projeto exige cache local do Hugging Face e falha explicitamente se o modelo não estiver disponível em cache quando `HF_HUB_OFFLINE=1`.
-- Há seleção automática de modelos por idioma com prioridade explícita, mas ela depende do par de idiomas e do modelo específico em cache.
-
-Limitações provadas:
-
-- A capacidade de tradução local é dependente do ambiente do usuário.
-- O repositório não distribui modelos nem pesos.
-- A compatibilidade real do modelo, idioma e hardware precisa ser validada no ambiente de execução.
-- A documentação reconhece que a qualidade pode variar e que a presença de um motor funcional não garante qualidade linguística aceitável.
-
-### 2.4 Qualidade linguística
-Estado comprovado:
-
-- Há validação de placeholders, chaves e glossário.
-- Há infraestrutura para proteção de placeholders e consistência de ícones, nomes e marcações estruturais.
-- O projeto não possui prova formal de qualidade linguística superior à tradução literal em pares reais, nem um benchmark oficial que ateste qualidade aceitável em múltiplos idiomas e contextos.
-- Há documentação explícita de que uma tradução pode ser tecnicamente bem-sucedida e ainda ser linguisticamente ruim.
-
-Conclusão:
-
-- Existem mecanismos técnicos para controle de qualidade estrutural.
-- A qualidade linguística ainda precisa ser validada por evidência real e não por inferência.
-- Esse ponto é o principal bloqueador para a GUI completa e para qualquer avaliação externa mais ampla.
-
-### 2.5 Uso de CPU e GPU
-Estado comprovado:
-
-- O projeto implementa detecção e seleção de dispositivo em nível de CLI e documentação.
-- A arquitetura prevê uso de CPU, CUDA, MPS e GPU automática.
-- O ambiente de CI não instala a stack de ML para evitar downloads pesados; a validação real de GPU permanece dependente do ambiente local.
-
-Limitações provadas:
-
-- O suporte a GPU não é validado automaticamente em CI.
-- O uso de memória e desempenho depende de hardware e modelo.
-- Não existe uma bancada oficial de benchmark que permita afirmar que a performance atual é aceitável de forma generalizada.
-
-### 2.6 Testes automatizados e CI
-Estado comprovado:
-
-- O repositório possui suíte de testes em pytest.
-- O CI executa lint, formatação, consistência de versão e testes cruzados em Windows, Ubuntu e macOS para Python 3.11, 3.12 e 3.13.
-- O fluxo de CI publica relatórios JUnit de testes e valida a consistência de versão entre `pyproject.toml`, `VERSION` e `poliglota/__init__.py`.
-- Há testes para CLI, adaptadores de formato, qualidade, dispositivos e contrato da arquitetura.
-
-Importante:
-
-- Os testes automatizados são essenciais e comprovam funcionalidade estrutural e de integração.
-- Eles não substituem validação de qualidade linguística, nem de robustez em produção real.
-- Testes de engine e GPU precisam ser considerados condicionais ao ambiente, e a documentação do projeto reconhece essa limitação.
-
-### 2.7 CLI e experiência de instalação
-Estado comprovado:
-
-- A CLI está implementada e declarada no `pyproject.toml` como entrypoint `poliglota`.
-- Há instalação via `pip install -e .` e extras opcionais para desenvolvimento e GPU.
-- O uso de CLI está documentado, com comandos `validate`, `sync`, `list-locales` e `translate`.
-- A instalação e operação real dependem de ambiente Python 3.11+ e dependências locais.
-
-O que isso implica:
-
-- A CLI é oficial e permanece indispensável.
-- Ela é a interface principal do produto em sua fase atual.
-- A experiência de instalação é simples, mas não elimina a necessidade de preparação local de modelos e recursos externos.
-
-### 2.8 Interface gráfica
-Estado comprovado:
-
-- Não há implementação de interface gráfica ativa no repositório.
-- Não há evidência de GUI funcional, dependências de GUI ou planejamentos concretos que impliquem uma tecnologia única definida.
-- A visão do projeto afirma que a GUI deve ser adicional e não substituir a CLI.
-
-Conclusão:
-
-- A GUI é uma oportunidade futura, não uma funcionalidade atual.
-- A decisão sobre tecnologia precisa ser feita com base na arquitetura real, custos de dependência, empacotamento e recursos adequados.
-
-### 2.9 Documentação e limitações conhecidas
-Estado comprovado:
-
-- O repositório contém documentação pública, guias de instalação, arquitetura, motores, dispositivos e limitações.
-- A documentação reconhece explicitamente que o projeto é experimental e que a qualidade de tradução e a compatibilidade de modelos precisam ser validadas em ambiente real.
-- O documento `docs/LIMITATIONS.md` classifica ARB como referência e YAML/JSON/XML como experimentais ou parcialmente cobertos.
-
-Conclusão:
-
-- Há documentação suficiente para orientar uso e limites.
-- O projeto não tenta esconder que o estado é experimental.
-- A documentação é um recurso de alinhamento do roadmap, não uma garantia de maturidade funcional.
+Os 8 skips vêm de `tests/test_pytorch_engine.py` (torch ausente no interpretador usado). Nenhum teste falhou.
 
 ---
 
-## 3. Fases de evolução
+## A. Visão e escopo
 
-### Fase 0 — Estabelecer a linha de base
-Objetivo:
-Estabelecer o estado real do projeto, incluindo modelos disponíveis, idiomas cobertos, condições de execução, limites conhecidos e divergências entre documentação e comportamento comprovado.
+### A.1 Problema
 
-Escopo:
-- confirmar a arquitetura e o conjunto de comandos existentes;
-- mapear formatos implementados e experimentais;
-- documentar motores e modelos locais explicitamente suportados;
-- registrar requisitos de CPU/GPU, offline e dependências opcionais;
-- identificar lacunas entre código, documentação e suporte real.
+Projetos de software acumulam arquivos de localização em formatos diferentes (ARB, JSON, YAML, XML, Gettext, CSV). Validar chaves, preservar placeholders, sincronizar locales e traduzir conteúdo sem perder estrutura é um trabalho repetitivo, sujeito a erro e normalmente resolvido com ferramentas fragmentadas ou serviços remotos.
 
-Dependências:
-- leitura de `README.md`, `CHANGELOG.md`, `VERSION`, `pyproject.toml`, arquitetura e documentos de limites;
-- revisão da suíte de testes e dos workflows de CI;
-- análise de comando real e recursos de modelo e dispositivo.
+O Poliglota ataca esse problema de forma local: uma ferramenta que lê arquivos de localização, valida sua integridade estrutural, sincroniza chaves e traduz conteúdo com motores locais, mantendo o formato e o motor desacoplados da aplicação consumidora.
 
-Evidências necessárias:
-- arquivos de documentação pública e de arquitetura;
-- teste de consistência de versão;
-- evidência de suporte por formato e motores;
-- documento de limitações e relatórios relevantes.
+### A.2 Público-alvo
 
-Critérios objetivos de conclusão:
-- a linha de base do projeto está documentada em arquivos rastreáveis;
-- as capacidades e limitações são descritas sem inferências não confirmadas;
-- versões, dependências e comportamentos reais são alinhados com código e CI.
+- Pessoas técnicas que mantêm repositórios com múltiplos locales e precisam de automação reprodutível.
+- Pessoas não técnicas que precisam traduzir arquivos de localização sem editar JSON/YAML manualmente.
+- Equipes que exigem execução offline, sem enviar conteúdo para serviços de terceiros.
 
-Condições que impedem a aprovação:
-- alegar suporte sem evidência de implementação ou teste;
-- tratar documentação como verdade sem checagem do código;
-- afirmar que qualidade linguística foi validada sem benchmark ou avaliação representativa.
+### A.3 O que o produto deve ser
 
-Resultado esperado:
-Uma linha de base confiável que permite decidir a próxima etapa sem presumir maturidade acima do real.
+- Gratuito e de código aberto.
+- Leve: consumo de disco, RAM, CPU e VRAM proporcional ao necessário.
+- Focado em tradução de arquivos de localização, não em conteúdo genérico.
+- Melhor do que substituição literal: deve preservar estrutura, placeholders, glossário e contexto de interface.
+- Capaz de operar offline quando o modelo já estiver no ambiente do usuário.
+- Utilizável por CLI e, em etapa posterior, por uma interface gráfica complementar.
+- Modular por formato, sem prometer cobertura universal.
+- Transparente sobre modelos, recursos, limitações e alterações que pode causar em arquivos.
 
-### Fase 1 — Validar a qualidade da tradução
-Objetivo:
-Avaliar se os motores e modelos produzem traduções adequadas para os idiomas e usos pretendidos, sem depender apenas de testes automáticos, velocidade ou semelhança entre CPU e GPU.
+### A.4 Fora de escopo
 
-Escopo:
-- definir corpus representativo e amostras de referência;
-- comparar motores e modelos em CPU e GPU, quando disponíveis;
-- registrar erros estruturais e linguísticos nos resultados;
-- validar preservação de placeholders, chaves, números e formatação;
-- definir critérios explícitos de aprovação antes da avaliação.
+- Tradução em nuvem, assinatura, cobrança por uso e backend remoto.
+- Gestão de projetos, colaboração multiusuário e fluxo editorial corporativo.
+- Download automático de modelos ou dependência de rede para funcionar.
+- Substituir a CLI pela GUI: a CLI permanece interface oficial.
+- Suporte a todos os formatos do mercado sem necessidade real e manutenção contínua.
 
-Dependências:
-- linha de base da Fase 0;
-- disponibilidade local real de modelos e ambiente de execução;
-- corpus de avaliação e documentação de critérios.
+### A.5 Princípio de sequenciamento
 
-Evidências necessárias:
-- amostras representativas dos tipos de texto suportados;
-- resultados de CPU e GPU em condições comparáveis;
-- análise de qualidade linguística em relação aos objetivos do projeto;
-- registro de falhas, truncamentos, textos vazios, placeholders alterados e mudanças indevidas.
-
-Critérios objetivos de conclusão:
-- a qualidade da tradução foi avaliada em referência a critérios definidos previamente;
-- os resultados estão documentados e comparáveis entre motores/ambientes;
-- a preservação de placeholders e estrutura é demonstrada;
-- o projeto não avança para GUI com qualidade linguística ainda não validada.
-
-Condições que impedem a aprovação:
-- ausência de amostragem representativa;
-- aprovação baseada somente em testes automatizados ou em execução sem contexto linguístico;
-- ausência de comparação entre CPU e GPU quando disponível;
-- falha em preservar placeholders, nomes, números ou estrutura.
-
-Resultado esperado:
-Uma conclusão factual sobre a qualidade da tradução, com evidência de que ela excede a simples substituição literal e atende ao objetivo do produto.
-
-### Fase 2 — Consolidar a confiabilidade do núcleo
-Objetivo:
-Produzir confiança real nos fluxos existentes de validação, sincronização, descoberta de locales e tradução local, com foco em integridade de arquivos e comportamento offline.
-
-Escopo:
-- validar integridade dos arquivos gerados e alterados;
-- confirmar comportamento com placeholders, chaves, glossários e estruturas de locale;
-- verificar fluxo de sincronização e gravação de arquivos;
-- reforçar tratamento de erros e comportamentos explícitos em casos de ausência de modelo ou ambiente incompatível;
-- documentar as lacunas efetivamente encontradas na auditoria do projeto.
-
-Dependências:
-- Fase 1 concluída ou pelo menos com evidência clara de bloqueios linguísticos;
-- uso real de modelos locais e arquivos de teste;
-- ambiente de execução que permita validação funcional concreta.
-
-Evidências necessárias:
-- testes de regressão, cenários de erro, foco em gravação e sincronização;
-- documentação de casos de falha e de recuperação;
-- confirmação de que o comportamento offline e os dispositivos respeitam a política explícita do projeto.
-
-Critérios objetivos de conclusão:
-- os fluxos de validação e sincronização são estáveis;
-- os placeholders e chaves são preservados;
-- a operação em modo offline falha de forma previsível quando o recurso não está disponível;
-- os riscos de modificação indevida de arquivos são conhecidos e controlados.
-
-Condições que impedem a aprovação:
-- alterações silenciosas em arquivos sem explicitação ao usuário;
-- execução sem modelo local quando a operação exige modelo;
-- ausência de regras claras para falhas de dispositivo, cache e modelo.
-
-Resultado esperado:
-Núcleo confiável, com processos que preservam integridade estrutural e controle explícito de recursos.
-
-### Fase 3 — Desenvolver uma interface gráfica amigável
-Objetivo:
-Adicionar uma GUI como camada complementar à CLI, sem transformar a interface gráfica em requisito para uso por terminal.
-
-Escopo:
-- permitir seleção de arquivos ou pastas;
-- oferecer escolha de idiomas e formatos suportados;
-- apresentar prévia das mudanças antes de gravar;
-- mostrar progresso e mensagens compreensíveis;
-- manter operações demoradas fora do bloqueio total da interface;
-- permitir gravação explícita e segura.
-
-Dependências:
-- Fases 0 a 2 concluídas ou com evidência suficiente para fundamentar a interação do usuário;
-- decisão informada sobre tecnologia GUI, custos de dependência e compatibilidade com empacotamento;
-- manutenção da CLI como interface oficial e não substituída.
-
-Evidências necessárias:
-- arquitetura de integração entre GUI e camada funcional atual;
-- validação do impacto no processo de instalação e execução;
-- avaliação da viabilidade de dependências e recursos do ambiente alvo.
-
-Critérios objetivos de conclusão:
-- a GUI usa a mesma lógica de núcleo do produto e não reimplementa regras de negócio;
-- a instalação da GUI é opcional e não exige que a CLI deixe de funcionar;
-- a gravação e a revisão de alterações são claras e seguras;
-- o sistema continua compatível com uso local e offline quando adequado.
-
-Condições que impedem a aprovação:
-- tecnologia escolhida sem considerar arquitetura real e custo;
-- GUI que reescreve ou contorna regras do núcleo;
-- processo de gravação que não exija confirmação explícita;
-- dependências pesadas ou não necessárias para o uso principal.
-
-Resultado esperado:
-Uma interface de uso amigável, complementar, segura e compatível com a CLI.
-
-### Fase 4 — Validar a experiência completa
-Objetivo:
-Validar o fluxo completo do produto, do ambiente de instalação à tradução e gravação dos arquivos, mantendo a continuidade do uso da CLI.
-
-Escopo:
-- validar fluxo de instalação em ambiente alvo;
-- verificar operação da CLI em cenários típicos;
-- testar traduções e sincronização em arquivos reais;
-- confirmar que a experiência não depende de condições ocultas nem de downloads automáticos.
-
-Dependências:
-- Fases 0 a 3 já concluídas ou com riscos explicitamente mapeados;
-- garantia de que a documentação e os requisitos de instalação correspondem ao comportamento real.
-
-Evidências necessárias:
-- cenário real de uso do zero até gravação do arquivo;
-- registro de tempo, recursos, falhas e correções necessárias;
-- validação da continuidade da CLI após a introdução da GUI.
-
-Critérios objetivos de conclusão:
-- o fluxo completo é executável e documentado;
-- os arquivos são alterados apenas quando o usuário aceita;
-- a CLI continua funcionando para uso técnico e automatizado;
-- a experiência global é consistente com a arquitetura do projeto.
-
-Condições que impedem a aprovação:
-- falhas de instalação ou ambiguidade de requisitos;
-- uso de downloads silenciosos ou rede não explícita;
-- operação completa que só funciona em um ambiente específico sem documentação adequada.
-
-Resultado esperado:
-Experiência comum validada para uso real, com documentação e limitações claras.
-
-### Fase 5 — Avaliar a expansão controlada de formatos
-Objetivo:
-Permitir expansão futura para outros formatos de localização, mas apenas quando houver necessidade real, manutenção adequada e qualidade preservada.
-
-Escopo:
-- definir critérios para adicionar um novo formato;
-- avaliar custo de manutenção, qualidade do adapter e necessidade para a comunidade ou usuários;
-- priorizar formatos com impacto real no uso productivo;
-- evitar a transformação do projeto em uma plataforma genérica de tradução.
-
-Dependências:
-- Fases 0 a 4 concluídas, com arquitetura estável e domínio bem entendido.
-
-Evidências necessárias:
-- análise da necessidade real do formato;
-- estudo do impacto na arquitetura e na qualidade;
-- manutenção contínua e critérios de compatibilidade com as regras do core.
-
-Critérios objetivos de conclusão:
-- novo formato só é adicionado quando traz valor real e preserva a clareza do projeto;
-- a nova extensão não degrada a experiência atual;
-- a qualidade e a manutenção são avaliadas antes da introdução.
-
-Condições que impedem a aprovação:
-- expansão por cobertura genérica sem necessidade;
-- suporte a formatos com qualidade incerta ou manutenção impraticável;
-- incompatibilidade com a visão restrita do produto.
-
-Resultado esperado:
-Um portfólio de formatos controlado, com alta qualidade e baixo acoplamento à aplicação.
+A ordem das fases é deliberada: **qualidade linguística e confiabilidade do núcleo vêm antes da GUI**. Uma interface amigável sobre um fluxo de tradução que não preserva placeholders, não traduz arquivos e não tem qualidade medida apenas amplia o impacto do erro.
 
 ---
 
-## 4. Critérios de aprovação
+## B. Estado atual do projeto
 
-### Critério geral
-Uma fase não pode ser considerada concluída apenas porque o código foi escrito. A conclusão depende de evidências verificáveis, documentação de resultados e critérios explícitos definidos antes da avaliação.
+### B.1 Estágio geral
 
-Para cada fase, os critérios mínimos são:
+**Fato verificado:** a versão oficial é `0.0.1`, declarada em `pyproject.toml`, espelhada em `poliglota/__init__.py` e no arquivo `VERSION`, com teste dedicado de consistência (`tests/test_version_consistency.py`). O projeto está em pré-1.0 e não garante estabilidade de API.
 
-- objetivo: a fase deve ter um propósito operacional e mensurável;
-- escopo: precisa definir claramente o que entra e o que não entra;
-- dependências: as dependências de entrada precisam ser identificadas;
-- evidências necessárias: devem existir provas reais de execução, análise e reprodução;
-- critérios objetivos: o que torna a fase aprovada deve ser específico e verificável;
-- condições que impedem a aprovação: deve haver bloqueios claros para evitar aprovação artificial;
-- resultado esperado: o que a fase entrega ao projeto deve ser explícito.
+**Fato verificado:** o repositório está na branch `main`, com histórico de dois commits. A árvore de trabalho **não** está limpa: `git status --porcelain` retorna ` M ROADMAP.md`, porque este próprio documento foi modificado. Nenhum outro arquivo versionado aparece alterado. A afirmação da versão 2.0 de que a árvore estava limpa era incorreta.
 
-### Regras de bloqueio entre fases
-Entre fases, o avanço deve ser impedido quando:
+### B.2 Arquitetura e organização do código
 
-- a qualidade da tradução não estiver validada adequadamente;
-- a integridade dos arquivos não tiver sido confirmada;
-- a CLI e o núcleo não forem confiáveis no uso real;
-- a GUI for considerada antes da maturidade funcional e da qualidade estrutural;
-- houver dependência de downloads automáticos, rede não declarada, ou ambiente não documentado;
-- a documentação para uso e instalação não refletir o comportamento real.
+**Fato verificado:**
+
+- Pacote `poliglota` com camadas separadas: `core`, `formats`, `engines`, `quality`, `gpu`, `config` e `cli`.
+- `poliglota/core` contém contratos independentes de formato e motor (`Locale`, `TranslationRequest`, `TranslationResult`, `TranslationIssue`, protocolos de engine, formato e qualidade). Um teste (`tests/test_core_contracts.py`) impede importação de módulos de formato dentro de `core`.
+- `poliglota/formats` contém adaptadores ARB, JSON, YAML e XML, além de registry.
+- `poliglota/engines` contém motor Marian, motor PyTorch, cache de respostas e uma fila de requisições.
+- `poliglota/quality` contém glossário, proteção de placeholders e validadores.
+- Compatibilidade retroativa mantida por módulos de reexportação (`arb_reader.py`, `models.py`, `validator.py`, `syncer.py`).
+- `poliglota/cli.py` é a camada de ligação e concentra a lógica de seleção de motor, dispositivo e verificação offline.
+
+**Leitura crítica:** a separação de camadas é real e testada. Isso não implica maturidade funcional do fluxo completo de tradução.
+
+### B.3 Formatos e maturidade
+
+**Fato verificado:**
+
+| Formato | Estado |
+|---|---|
+| ARB | Implementação de referência: parsing, descoberta, inferência de locale, validação de chaves e placeholders, sincronização com dry-run e round-trip. |
+| JSON | Adaptador genérico registrado; validação específica limitada. |
+| YAML | Adaptador genérico registrado; validação específica limitada. |
+| XML | Adaptador genérico registrado, com leitura segura via `defusedxml`; validação específica limitada. |
+| CSV | Sem adaptador. |
+| Gettext (.po/.pot) | Sem adaptador. |
+
+**Fato verificado:** `docs/supported-formats.md` e `docs/architecture/overview.md` declaram explicitamente que JSON, YAML e XML têm validação específica inferior ao ARB e que CSV/Gettext não têm adaptador.
+
+**Consequência:** a matriz de formatos atual é suficiente para provar o desenho modular, mas não para afirmar cobertura de produção.
+
+**Defeito verificado por inspeção de código (JSON/YAML/XML):** `sync_with_adapter` e `validate_with_adapter` correlacionam recursos de origem e destino por `resource.attributes.get("module")`. Os adaptadores JSON, YAML e XML registram apenas `attributes={"directory": ...}`, portanto `module` é `None` em todos os recursos. Com um único arquivo por locale o efeito é invisível; com dois ou mais arquivos por locale, todo arquivo de origem "casa" com todo arquivo de destino: a validação reporta chaves ausentes falsas e o sync copia chaves do arquivo errado. Os testes atuais usam um arquivo por locale e não cobrem o cenário. Reprodução em runtime ainda pendente.
+
+### B.4 Motores e modelos
+
+**Fato verificado:**
+
+- Motores disponíveis: `marian` (padrão) e `pytorch`.
+- O motor padrão é configurável por `POLIGLOTA_DEFAULT_MOTOR`; `POLIGLOTA_ENGINE` também é documentado.
+- Seleção automática de modelo segue prioridade explícita no código, com `Helsinki-NLP/opus-mt-en-es`, `Helsinki-NLP/opus-mt-en-fr` e `Helsinki-NLP/opus-mt-tc-big-en-pt`. Na prática, a seleção automática cobre pares entre `en`, `es`, `fr` e `pt`; outros pares exigem `--model` ou `POLIGLOTA_DEFAULT_MOTOR`.
+- O projeto não empacota modelos nem inclui pesos; o cache é responsabilidade do usuário. O código do Marian, porém, não força `local_files_only` (ver B.8).
+- O caminho offline depende de `HF_HOME`/cache do Hugging Face e de `HF_HUB_OFFLINE=1`.
+- Cache de respostas é opcional, em memória, desativado por padrão (`POLIGLOTA_ENABLE_TRANSLATION_CACHE`).
+- `RequestQueue` existe como utilitário, mas **não está integrado ao caminho síncrono da CLI**.
+
+**Fato verificado:** o motor PyTorch não aplica proteção de placeholders nem glossário durante a tradução; esses recursos existem na camada de qualidade e são usados em validação, mas não no fluxo de tradução desse motor. O motor Marian possui tratamento próprio de placeholders.
+
+**Limite verificado (PyTorch):** `_SUPPORTED_PAIRS` restringe o motor a oito pares entre `en`, `pt`, `es` e `fr`. A afirmação de `docs/LIMITATIONS.md` de que ele aceita "qualquer modelo compatível" não corresponde ao código. O caminho PyTorch usa `local_files_only` quando `HF_HUB_OFFLINE` está ativo (comportamento correto), mas a CLI não executa a verificação preventiva de cache para esse motor.
+
+**Defeitos e limites verificados por inspeção de código no motor Marian:**
+
+- `MariansNMTAdapter.translate()` restaura os placeholders duas vezes: `_restore_known_placeholders()` já reinsere as tags e o laço seguinte (`if positions:`) reinsere as mesmas posições. Textos com `<en>`, `<pt>`, `<es>` ou `<fr>` produzem tags duplicadas. O fluxo da CLI mascara placeholders ARB antes de chamar o adaptador, o que oculta o defeito no caminho padrão, mas a API pública do motor está incorreta.
+- `_SUPPORTED_MODELS` aceita apenas quatro identificadores (`opus-mt-tc-big-en-pt`, `opus-mt-en-es`, `opus-mt-en-fr`, `facebook/m2m100_418M`). Modelos citados nos benchmarks internos (`mBART-50`, `NLLB-200`) não podem ser selecionados por `--model` no motor Marian.
+- `_SUPPORTED_PAIRS` declara `pt→de/ja/ko/pl/ru/it` via M2M100, mas `translate()` não força o token de idioma de destino (`forced_bos_token_id`/`get_lang_id`) e `_strip_known_placeholders` só reconhece tags en/pt/es/fr. O suporte multilíngue é nominal, não comprovado.
+
+**Fato verificado:** os testes que exigem PyTorch são marcados como `skipped` quando a stack opcional não está instalada. No ambiente desta revisão (Python 3.13.11 no interpretador do sistema), a execução resultou em **238 passed, 8 skipped in 1.80s**, com os 8 skips vindos de `tests/test_pytorch_engine.py` por ausência de `torch`.
+
+### B.5 Qualidade linguística
+
+**Fato verificado:**
+
+- Existe infraestrutura de qualidade testada: glossário (JSON/CSV, com fronteira de palavra), proteção de placeholders ARB (máscara/restauração/validação), validadores de chave, placeholder, glossário e estrutura composta.
+- Existem testes dedicados: `test_quality_glossary.py`, `test_quality_placeholders.py`, `test_quality_validation.py`.
+- Placeholders são detectados e protegidos **apenas no formato ARB**; formatos customizados exigem implementação própria.
+- O glossário é aplicado por correspondência exata, com fronteira de palavra, sem tratamento de plural, gênero ou variação morfológica.
+
+**Pendente / não comprovado:**
+
+- Não há, no repositório versionado, corpus de avaliação linguística com revisão por falante nativo.
+- Não há limiar formal de qualidade (adequação, fluência, terminologia) definido e aplicado como gate.
+- Não há teste de regressão de qualidade de tradução com conjunto dourado versionado.
+
+**Evidência interna disponível, porém insuficiente:** `reports/stress-test/results/FASE3_FINAL_REPORT.md` descreve 792 traduções (396 CUDA + 396 CPU), 100% de identidade entre dispositivos e avaliação heurística de 45 amostras com score agregado de 99,4%. O próprio relatório declara que a avaliação foi heurística/baseada em LLM, **não** por linguista independente. Além disso, `reports/stress-test/results/translation_quality_assessment.json` apresenta valores desalinhados entre chave e tradução e marca todos os critérios como aprovados de forma indiscriminada, o que impede tratá-lo como prova. Esses artefatos não são versionados (`reports/` está no `.gitignore`).
+
+**Conclusão:** a qualidade linguística é o principal risco aberto do projeto e o principal bloqueio para a GUI.
+
+### B.6 CPU e GPU
+
+**Fato verificado (benchmark local, `reports/GPU_CPU_BENCHMARK_RESULTS.md`):**
+
+| Item | Valor |
+|---|---|
+| GPU | NVIDIA GeForce GTX 1050 Ti |
+| PyTorch | 2.7.0+cu128 |
+| Transformers | 5.20.2 |
+| Modelo do benchmark | `t5-small` (via caminho PyTorch) |
+| Carga do modelo | ~2,83 s |
+| small_batch1 | 429,61 ms; 2,33 textos/s; RAM ~1.143 MB; VRAM ~244 MB |
+| small_batch4 | 431,13 ms; 9,28 textos/s; VRAM ~244 MB |
+| medium_batch4 | 884,49 ms; 4,52 textos/s; VRAM ~251 MB |
+| large_batch4 | 2.966,30 ms; 1,35 textos/s; VRAM ~324 MB |
+
+**Leitura correta:** o benchmark comprova que o caminho PyTorch funciona em CUDA nessa máquina e mede custo de inferência de `t5-small`. Ele **não** comprova qualidade de tradução nem desempenho do motor Marian.
+
+**Fato verificado:** existe fallback para CPU em erro de VRAM/OOM e redução adaptativa de batch no motor PyTorch.
+
+**Fato verificado (reproduzido nesta revisão):** o fluxo de verificação offline não localiza modelos no cache real do Hugging Face. `_verify_offline_capability()` e `_select_default_motor._model_in_cache()` procuram `hub/<org>--<nome>`, mas o cache real usa `hub/models--<org>--<nome>`. Nesta máquina, `models--Helsinki-NLP--opus-mt-en-es` existe; ainda assim o predicado retorna `False` e, com `HF_HUB_OFFLINE=1`, a função levanta `RuntimeError("Model cache not available for offline mode")` mesmo com o modelo presente. Consequência: o modo offline do motor Marian é inutilizável na prática, e a seleção automática com `HF_HUB_OFFLINE=1` não encontra nenhum candidato. Correção obrigatória na Fase 2, com teste nos dois cenários (cache presente e ausente).
+
+### B.7 Testes e CI
+
+**Fato verificado:**
+
+- Suíte sem rede: **238 passed, 8 skipped in 1.80s**, executada nesta revisão com Python 3.13.11 no interpretador do sistema (`C:\Users\Jorge\AppData\Local\Programs\Python\Python313\python.exe`). O `.venv` existe no repositório, mas não foi o interpretador usado.
+- 15 arquivos de teste cobrindo CLI, contratos, formatos, motores (com mocks), dispositivos, qualidade e versão.
+- `.github/workflows/ci.yml` define **2 jobs** (`quality` e `tests`); o job `tests` é uma matriz de 9 combinações (Ubuntu/Windows/macOS × Python 3.11/3.12/3.13). Contando as pernas da matriz, são **10 execuções**: 1 de qualidade (Ubuntu, Python 3.13: `ruff check`, `ruff format --check`, teste de consistência de versão) e 9 de teste. A expressão "10 jobs" do README é aceitável nessa contagem, mas imprecisa quanto à definição do YAML.
+- A stack de ML não é instalada no CI; testes dependentes dela ficam `skipped`.
+
+**Pendente:** a afirmação do README de que as 10 execuções estão aprovadas no GitHub Actions não foi verificada nesta sessão (sem acesso à rede). Deve ser confirmada por link do provedor antes de ser usada como evidência de fase.
+
+### B.8 CLI e instalação
+
+**Fato verificado:**
+
+- Entry point `poliglota`, com quatro comandos: `validate`, `sync`, `list-locales`, `translate`.
+- `translate` recebe o texto como argumento posicional e devolve a tradução de **um texto**, não de um arquivo de localização.
+- Requisitos: Python `>=3.11`; dependências de runtime `defusedxml>=0.7.1` e `pyyaml>=6.0`; extra `[gpu]` com `torch>=2.7.0`, `transformers>=5.20.0`, `huggingface-hub>=0.20.0`, `sacremoses>=0.1.0`; extra `[dev]` com `pytest>=8.0` e `ruff`.
+- A instalação documentada é `python -m pip install -e .`, sem download de modelos.
+
+**Lacunas verificadas no código:**
+
+1. **Não existe fluxo ponta a ponta de tradução de arquivos.** `validate`, `sync` e `list-locales` operam sobre recursos; `translate` opera sobre uma string. O produto ainda não traduz um arquivo ARB/JSON/YAML/XML preservando estrutura e gravando saída.
+2. **Flags de validação não podem ser desativadas pela CLI.** `--preserve-placeholders`, `--check-keys` e `--check-placeholders` usam `action="store_true"` com `default=True`; o usuário não consegue obter `False` pela linha de comando.
+3. **O motor PyTorch não preserva placeholders nem aplica glossário na tradução**, apesar de o CHANGELOG descrever proteção de placeholders no fluxo de tradução. O glossário também não é aplicado na tradução do Marian: só é validado em `validate --check-glossary`.
+4. **O README promete ausência de download automático que o código não garante.** `AutoTokenizer.from_pretrained()`/`AutoModelForSeq2SeqLM.from_pretrained()` no Marian são chamados sem `local_files_only`; sem `HF_HUB_OFFLINE=1`, a biblioteca pode baixar o modelo. `docs/LIMITATIONS.md` reconhece isso ("Offline mode is NOT automatic"), mas o README afirma o contrário.
+5. **Sync/validate multiarquivo em JSON/YAML/XML está incorreto** (ver B.3): a correlação por `module` é sempre `None` nesses adaptadores.
+6. **`--device gpu` é estrito no código e na documentação** (`README.md` e `docs/guides/gpu-devices.md` dizem que dispositivos explícitos falham quando indisponíveis). Não há divergência a corrigir; a versão 2.0 deste roadmap estava errada nesse ponto. A decisão pendente é de produto: manter `gpu` estrito ou torná-lo alias permissivo.
+
+### B.9 GUI
+
+**Fato verificado:** não existe interface gráfica no repositório. Não há código de GUI, dependência de GUI, ponto de entrada gráfico nem testes de interface.
+
+**Consequência:** a GUI é escopo futuro, não estado atual. Qualquer texto que a descreva como existente é impreciso.
+
+### B.10 Documentação e limitações
+
+**Fato verificado:** existem `README.md`, `CHANGELOG.md`, `SECURITY.md`, `CONTRIBUTING.md`, `LICENSE`, `docs/architecture/`, `docs/development/`, `docs/guides/`, `docs/supported-formats.md` e `docs/LIMITATIONS.md`.
+
+**Divergências verificadas entre documentação e código:**
+
+| Documento | Afirmação | Realidade verificada |
+|---|---|---|
+| `SECURITY.md` | "At this stage it has no runtime dependencies" | `pyproject.toml` declara `defusedxml` e `PyYAML` como dependências de runtime. |
+| `CHANGELOG.md` | "Validação de glossário e proteção de placeholders no fluxo de tradução" | Glossário é validado apenas em `validate --check-glossary`; não é aplicado na tradução. Placeholders são protegidos no Marian, não no PyTorch. |
+| `README.md` | "Nenhum modelo é baixado automaticamente... o comando falha com mensagem explícita" | Sem `HF_HUB_OFFLINE=1`, o Marian chama `from_pretrained` sem `local_files_only` e pode baixar. Além disso, o predicado de cache offline está errado (B.6), então com `HF_HUB_OFFLINE=1` o comando falha mesmo com o modelo presente. |
+| `README.md` | Ferramenta traduz recursos de localização | `translate` traduz apenas um texto posicional; não há tradução de arquivo. |
+| `docs/LIMITATIONS.md` | `--device gpu` é "alias for auto" e "never fails" | Código e `docs/guides/gpu-devices.md` tratam `gpu` como explícito e estrito. O próprio conjunto de docs se contradiz. |
+| `docs/LIMITATIONS.md` | Marian suporta `fr → de`; PyTorch aceita "qualquer modelo compatível" | `_SUPPORTED_PAIRS` do Marian não contém `fr→de`; o PyTorch restringe a oito pares entre en/pt/es/fr. |
+| `docs/architecture/overview.md` | Lista `json_adapter.py`, `yaml_adapter.py`, `xml_adapter.py` | Os arquivos reais são `json.py`, `yaml.py` e `xml.py`. |
+| `docs/ARCHITECTURE_MULTIDEVICE_DESIGN.md` | Documento de design | O próprio arquivo declara "DESIGN APENAS (sem código implementado)"; não é estado atual. |
+| Relatório `PHASE_D_EXECUTIVE_SUMMARY_FINAL.md` | M2M-100-418M como motor padrão | Código verificado usa `marian` com modelos `opus-mt` como padrão. |
+| Relatório `FASE3_FINAL_REPORT.md` | `ResponseCache` e `RequestQueue` ausentes (design-only) | `poliglota/engines/response_cache.py` e `request_queue.py` existem e têm testes; o cache é opcional e a fila não está ligada à CLI. |
+
+**Consequência:** a documentação pública precisa ser corrigida antes de ser usada como contrato de comportamento.
 
 ---
 
-## 5. Marco de qualidade linguística
+## C. Fases
 
-A qualidade de tradução deve ser tratada como critério funcional e de produto, não como efeito colateral da presença de código ou de testes automatizados. A produção de um texto “bem formatado” ou sem erros de execução não prova qualidade linguística.
+As fases abaixo são sequenciais. Uma fase só começa quando a anterior for aprovada com evidência reproduzível. Nenhuma fase altera a versão `0.0.1`; mudança de versão é decisão separada, fora deste roadmap.
 
-### Qualidade linguística aprovada
-A qualidade linguística pode ser considerada aprovada apenas quando houver evidência de que a tradução:
+### Fase 0 — Linha de base verificável
 
-- preserva o significado original;
-- é natural no idioma de destino;
-- está gramaticalmente correta;
-- mantém nomes, números, placeholders e indicadores de formatação;
-- considera contexto de mensagens curtas e UI;
-- evita texto não traduzido, truncado, vazio ou alterado de forma indevida;
-- apresenta consistência em relação a referências humanas e revisões por pessoas competentes.
+**Objetivo:** estabelecer uma linha de base reproduzível do que existe hoje, corrigir divergências documentais e criar o gate mínimo de evidência.
 
-### Consistência entre CPU e GPU
-Essa dimensão é diferente da qualidade linguística. Um resultado consistente entre CPU e GPU não prova qualidade de tradução; apenas indica previsibilidade de execução em diferentes dispositivos.
+**Escopo:**
 
-### Compatibilidade técnica do modelo
-Compatibilidade técnica é outra dimensão: o modelo pode funcionar corretamente e ainda produzir tradução inadequada. A capacidade técnica de carregamento e execução não substitui a validação da qualidade da saída.
+- Congelar o estado atual: comando de teste, lint, formatação e versão, com saída registrada.
+- Corrigir afirmações falsas ou desatualizadas em `SECURITY.md`, `CHANGELOG.md`, `README.md` e `docs/LIMITATIONS.md` (dependências de runtime, escopo real de `translate`, download automático, contrato de `--device gpu`, pares suportados por motor, proteção de placeholders por motor).
+- Corrigir nomes de arquivos citados em `docs/architecture/overview.md` (`json_adapter.py` → `json.py`, etc.).
+- Definir e documentar um protocolo único de evidência para aprovação de fase.
+- Registrar explicitamente o que é fato, hipótese e pendência.
 
-### Desempenho e consumo de recursos
-Desempenho não deve ser tratado como equivalente a qualidade. O projeto prioriza eficiência, mas a otimização não pode sacrificar silenciosamente a qualidade da língua ou a integridade do arquivo.
+**Fora de escopo:** novas funcionalidades, mudança de comportamento, GUI, novos formatos.
 
-### Regra de avanço
-Se a qualidade linguística não for aprovada, o roadmap deve prever retorno à investigação do motor, do modelo ou da configuração da tradução. A fase não pode ser declarada concluída apenas porque a execução foi bem-sucedida do ponto de vista técnico.
+**Dependências:** nenhuma.
 
----
+**Evidências exigidas:**
 
-## 6. Critérios para considerar o produto pronto para avaliação externa
+- Saída literal de `python -m pytest -q` com contagem de aprovados/skips.
+- Saída literal de `python -m ruff check poliglota tests` e `python -m ruff format --check poliglota tests`.
+- Confirmação de que `VERSION`, `pyproject.toml` e `poliglota/__init__.py` permanecem em `0.0.1`.
+- Link ou captura das 10 execuções de CI (1 job de qualidade + 9 pernas da matriz), ou declaração explícita de que não foi verificado.
 
-Antes de recomendar uso por usuários não técnicos ou avaliação externa, o projeto deve atender a critérios objetivos:
+**Critérios objetivos de aprovação:**
 
-- qualidade da tradução validada em amostras relevantes e documentadas;
-- preservação de placeholders, chaves, marcações e estrutura estrutural dos arquivos;
-- gravação de arquivos segura e explícita;
-- fluxo de instalação e operação documentados e reproduzíveis;
-- comportamento claro em ausência de modelo, ambiente incompatível ou dispositivo indisponível;
-- documentação das limitações conhecidas e das condições que exigem atenção do usuário;
-- continuidade do uso da CLI e compatibilidade do núcleo com a arquitetura prevista;
-- não depender de downloads automáticos nem de rede silenciosa no uso normal;
-- evidência de confiabilidade suficiente para justificar a recomendação de uso fora do ambiente de desenvolvimento.
+- Todos os comandos acima executados sem erro, ou cada falha preexistente documentada com causa e escopo.
+- Nenhuma divergência documental conhecida permanece sem correção ou sem registro formal como pendência.
+- Relatório de linha de base versionado (não apenas em `reports/`).
 
-Não deve haver data artificial nem declaração de prontidão antecipada. Qualquer recomendação externa precisa ser baseada em evidência e não em expectativa de maturidade.
+**Condições impeditivas:**
+
+- Qualquer documento público descrevendo funcionalidade inexistente sem marcação de plano futuro.
+- Uso de relatório não versionado como única prova.
+- Alteração de versão.
+
+**Resultado esperado:** um retrato confiável e reproduzível do estado real, aceito como ponto de partida por qualquer avaliador externo.
 
 ---
 
-## 7. Riscos e limitações
+### Fase 1 — Qualidade da tradução
 
-### Fatos comprovados
-- O projeto está em versão 0.0.1, sem release pública e sem garantia de estabilidade de API.
-- ARB é o formato mais maduro; JSON, YAML e XML são mais experimentais.
-- O suporte a tradução local depende de modelos locais e de uma stack com dependências opcionais.
-- A GPU real não é validada de maneira automática no CI.
-- O repositório não distribui modelos, pesos ou tokenizers.
-- Testes automatizados não substituem a validação de qualidade linguística.
-- A interface gráfica não existe como funcionalidade atual.
+**Objetivo:** provar, com método verificável, que a tradução produzida é adequada para arquivos de localização — antes de investir em GUI.
 
-### Hipóteses que precisam de validação
-- que a qualidade da tradução atende ao objetivo do projeto em idiomas relevantes;
-- que o desempenho em CPU e GPU é aceitável para os casos de uso de interesse;
-- que a experiência de GUI será útil e compatível com a arquitetura atual;
-- que a expansão de formatos aumentará valor sem comprometer manutenção e qualidade;
-- que os modelos locais escolhidos produzirão resultados consistentes para os pares de idiomas esperados.
+**Escopo:**
 
-Essas hipóteses não devem ser tratadas como fatos até que a evidência seja gerada em ambiente apropriado.
+- Definir corpus de avaliação versionado, representativo de UI (rótulos curtos, instruções, mensagens de erro, plurais, placeholders, termos técnicos, textos longos).
+- Definir conjunto dourado com tradução de referência e critérios de aceitação.
+- Implementar avaliação reproduzível offline (script versionado, sem rede), com métricas automáticas para estrutura e placeholders, e protocolo de avaliação humana para adequação/fluência/terminologia.
+- Garantir que glossário e placeholders sejam aplicados **no fluxo de tradução**, não apenas na validação, em todos os motores suportados.
+- Comparar motores e modelos candidatos sob o mesmo corpus e o mesmo ambiente.
+- Documentar limites conhecidos: idiomas não latinos, plurais, gênero, morfologia, termos ambíguos.
+
+**Fora de escopo:** GUI, novos formatos, tradução em nuvem, ajuste fino de modelos.
+
+**Dependências:** Fase 0 aprovada; modelos disponíveis localmente para os pares avaliados.
+
+**Evidências exigidas:**
+
+- Corpus e conjunto dourado versionados, com licença compatível.
+- Script de avaliação versionado e executável offline.
+- Resultados brutos por par de idiomas, por motor e por modelo.
+- Relatórios de revisão humana com identificação do revisor, idioma, quantidade avaliada e escala usada.
+- Prova de que a execução não acessou a rede.
+
+**Critérios objetivos de aprovação:**
+
+- Zero perda de chave e zero perda/alteração de placeholder em 100% do corpus avaliado.
+- Aderência de 100% aos termos obrigatórios do glossário no corpus.
+- Média de adequação e fluência ≥ 4,0/5,0 por idioma avaliado, com nenhuma amostra crítica abaixo de 3,0.
+- Nenhuma tradução vazia, truncada ou idêntica ao idioma de origem sem justificativa registrada.
+- Resultado reproduzível: mesma entrada, mesmo modelo, mesmo dispositivo → mesma saída (ou divergência explicada e documentada).
+- Relatório final com riscos remanescentes e recomendação explícita de avançar ou não.
+
+**Condições impeditivas:**
+
+- Avaliação apenas heurística ou feita pelo próprio autor do código sem revisão independente.
+- Corpus pequeno, não versionado ou não representativo.
+- Qualquer placeholder perdido ou qualquer chave ausente.
+- Ausência de medição para idiomas não latinos.
+- Uso de relatório em `reports/` como única evidência.
+
+**Resultado esperado:** decisão fundamentada sobre qualidade, com limites claros, que autorize ou bloqueie a GUI.
 
 ---
 
-## 8. Como tratar a qualidade de tradução
+### Fase 2 — Confiabilidade do núcleo
 
-O projeto deve deixar explícito este ponto: uma tradução pode ser tecnicamente bem-sucedida e ainda ser linguisticamente ruim. A validação futura não pode se basear em uma métrica automática isolada como prova suficiente de qualidade.
+**Objetivo:** transformar a capacidade atual em um fluxo de tradução de arquivos seguro, previsível e integrável.
 
-O estado real do projeto exige avaliação com critérios definidos antes da execução, incluindo:
+**Escopo:**
 
-- fidelidade ao significado original;
-- naturalidade no idioma de destino;
-- correção gramatical;
-- preservação de nomes, números, placeholders e marcadores de formatação;
-- adequação de mensagens curtas e contextuais;
-- detecção de textos não traduzidos, truncados, vazios ou alterados indevidamente;
-- qualidade em relação a referências revisadas por pessoas competentes;
-- consumo de recursos e tempo de execução sem sacrificar silenciosamente a qualidade.
+- Fluxo ponta a ponta: ler arquivo de localização, traduzir entradas, preservar estrutura/metadados e gravar saída.
+- Escrita segura: nunca sobrescrever em caso de falha parcial; gravação atômica; modo dry-run; relatório de alterações.
+- Correção das flags de validação que não podem ser desativadas.
+- Decisão e documentação do contrato de `--device` (manter `gpu` estrito ou tratá-lo como alias), com fallback explícito.
+- Verificação offline correta contra o layout real do cache do Hugging Face (`models--<org>--<nome>`).
+- Proteção de placeholders e aplicação de glossário em todos os motores, com validação antes de gravar.
+- Correção da duplicação de placeholders em `MariansNMTAdapter.translate()`, com teste dedicado.
+- Correção da correlação de arquivos no sync/validate de JSON/YAML/XML (usar `directory`/caminho real em vez do `module` inexistente).
+- Alinhamento entre whitelist de modelos, matriz de pares declarada e capacidade real de cada motor (ou redução da declaração).
+- Códigos de saída e mensagens de erro estáveis, documentados e testados.
+- Testes de regressão para cada correção, incluindo casos de falha.
 
-Esses critérios devem ser definidos e justificados antes da avaliação; em caso contrário, o resultado pode parecer positivo por conveniência e, na prática, não refletir qualidade real.
+**Fora de escopo:** GUI, novos formatos, mudanças de modelo, redesenho de arquitetura.
+
+**Dependências:** Fase 1 aprovada.
+
+**Evidências exigidas:**
+
+- Testes automatizados cobrindo o fluxo de arquivo, falhas e escrita atômica.
+- Execução manual reproduzível em pelo menos um projeto de exemplo versionado.
+- Confirmação de comportamento offline com cache real e com cache ausente.
+- Matriz de códigos de saída e mensagens.
+
+**Critérios objetivos de aprovação:**
+
+- Tradução de arquivo ARB ponta a ponta com estrutura, ordem de chaves, metadados e placeholders preservados.
+- Nenhuma escrita parcial em cenário de erro induzido.
+- Flags de validação configuráveis nos dois sentidos, com testes.
+- `--device gpu`, `auto`, `cpu`, `cuda` e `mps` com comportamento igual ao documentado.
+- Detecção offline correta nos dois cenários (modelo presente e ausente).
+- Sync e validate de JSON/YAML/XML corretos com múltiplos arquivos por locale, cobertos por teste.
+- Placeholders preservados sem duplicação na API do Marian e também no caminho PyTorch.
+- Nenhum modelo ou par declarado sem suporte efetivo, ou declaração reduzida ao que é entregue.
+- Suíte completa aprovada, sem novos skips injustificados.
+
+**Condições impeditivas:**
+
+- Qualquer caminho que possa corromper ou sobrescrever arquivo do usuário sem confirmação.
+- Divergência entre comportamento e documentação.
+- Correção aplicada apenas ao motor padrão, deixando outro motor inconsistente.
+
+**Resultado esperado:** núcleo confiável o suficiente para ser operado por usuários não técnicos por meio de uma GUI.
 
 ---
 
-## 9. Conclusão
+### Fase 3 — GUI
 
-O Poliglota está em um estágio funcional, modular e claramente experimental. A arquitetura e a CLI estão estabelecidas; a base de formatos e motores existe; os testes e o CI fornecem uma camada importante de garantia estrutural; porém, a qualidade linguística, a confiabilidade real do núcleo e a experiência completa ainda exigem validação orientada por evidência, não por conjectura.
+**Objetivo:** oferecer interface gráfica local, amigável, sem remover nem reduzir a CLI.
 
-O roadmap acima define uma sequência prudente e orientada por critérios verificáveis: primeiro a linha de base, depois a qualidade da tradução, depois a confiabilidade do núcleo, a GUI, a experiência completa e, por fim, a expansão controlada de formatos. Essa ordem é necessária para manter o foco na visão original do projeto e evitar escalada para produtos ou serviços que não fazem parte do escopo do Poliglota.
+**Escopo:**
+
+- Aplicação desktop local, sem backend remoto e sem telemetria obrigatória.
+- Fluxo guiado: selecionar raiz, detectar formatos/locales, escolher origem e destino, revisar prévia, traduzir, validar e gravar.
+- Exibição clara de placeholders, glossário, avisos e erros.
+- Revisão e edição antes da gravação; desfazer; dry-run visível.
+- Acessibilidade: navegação por teclado, foco visível, contraste adequado, rótulos e leitura por tela.
+- A GUI consome o núcleo, sem duplicar regra de negócio.
+
+**Fora de escopo:** colaboração em nuvem, contas, sincronização remota, edição colaborativa.
+
+**Dependências:** Fases 1 e 2 aprovadas.
+
+**Evidências exigidas:**
+
+- Demonstração reproduzível do fluxo completo em projeto de exemplo.
+- Testes de interface para caminhos críticos e testes do núcleo reaproveitados.
+- Checklist de acessibilidade com itens verificados.
+- Prova de que a CLI continua funcionando de forma independente.
+
+**Critérios objetivos de aprovação:**
+
+- Fluxo completo executável sem terminal.
+- Nenhuma regra de tradução/validação duplicada na GUI.
+- Nenhuma operação destrutiva sem confirmação explícita e possibilidade de reverter.
+- Checklist de acessibilidade aprovado.
+- Paridade funcional: toda operação da GUI existe na CLI ou é explicitamente justificada.
+
+**Condições impeditivas:**
+
+- GUI que dependa de serviço remoto.
+- GUI que bloqueie, substitua ou degrade a CLI.
+- Funcionalidade presente apenas na GUI, sem caminho equivalente no núcleo/CLI.
+- Fase 1 ou 2 não aprovada.
+
+**Resultado esperado:** interface utilizável por público não técnico, apoiada em núcleo já validado.
+
+---
+
+### Fase 4 — Experiência completa
+
+**Objetivo:** fechar o ciclo de trabalho do usuário, da configuração inicial à entrega dos arquivos traduzidos.
+
+**Escopo:**
+
+- Gestão de glossário pela interface e pela CLI, com importação/exportação.
+- Perfis de projeto (origem, destinos, formato, modelo, dispositivo) persistidos localmente.
+- Retomada de trabalho interrompido, com estado explícito.
+- Relatórios de execução: alterações, avisos, itens não traduzidos, pendências.
+- Empacotamento e instruções de instalação para os sistemas suportados.
+- Onboarding e mensagens de erro orientadas à ação.
+- Documentação de usuário revisada e alinhada ao comportamento real.
+
+**Fora de escopo:** colaboração, nuvem, cobrança, marketplace de modelos.
+
+**Dependências:** Fase 3 aprovada.
+
+**Evidências exigidas:**
+
+- Cenário ponta a ponta documentado e reproduzido.
+- Testes de retomada e de relatório.
+- Instalação verificada nos sistemas declarados.
+- Documentação revisada contra o comportamento executado.
+
+**Critérios objetivos de aprovação:**
+
+- Fluxo completo executado por alguém sem conhecimento do código, seguindo apenas a documentação.
+- Nenhuma perda de dados em retomada ou interrupção.
+- Relatório final suficiente para auditar o que foi alterado.
+- Instalação reproduzível nos sistemas suportados.
+
+**Condições impeditivas:**
+
+- Dependência de conhecimento interno não documentado.
+- Instalação não reproduzível.
+- Relatório que não permita reconstruir as alterações.
+
+**Resultado esperado:** produto utilizável de ponta a ponta por público técnico e não técnico.
+
+---
+
+### Fase 5 — Expansão de formatos
+
+**Objetivo:** ampliar a cobertura de formatos com o mesmo rigor, sem degradar o que já funciona.
+
+**Escopo:**
+
+- Gettext (.po/.pot) e CSV, se houver necessidade real comprovada.
+- Estratégias de placeholder por formato (printf, ICU, chaves nomeadas), com testes dedicados.
+- Tratamento de plural e gênero conforme o formato permitir.
+- Documentação da matriz de suporte atualizada e honesta.
+- Migração de formatos hoje genéricos (JSON/YAML/XML) para validação específica quando aplicável.
+
+**Fora de escopo:** formatos sem necessidade comprovada; promessa de cobertura universal.
+
+**Dependências:** Fases 1–4 aprovadas, ou decisão explícita de priorizar formatos antes da Fase 4, com registro do motivo.
+
+**Evidências exigidas:**
+
+- Especificação do formato e da estratégia de placeholder.
+- Casos de teste de round-trip, validação, sync e tradução.
+- Corpus de qualidade específico do formato.
+- Documentação atualizada.
+
+**Critérios objetivos de aprovação:**
+
+- Round-trip sem perda para cada novo formato.
+- Placeholders do formato preservados em 100% dos casos testados.
+- Suíte existente sem regressão.
+- Matriz de suporte coerente com o código.
+
+**Condições impeditivas:**
+
+- Novo formato sem estratégia de placeholder definida.
+- Regressão em formatos já suportados.
+- Documentação prometendo suporte não validado.
+
+**Resultado esperado:** cobertura crescente e sustentável, guiada por necessidade real.
+
+---
+
+## D. Critérios de aprovação por fase
+
+A tabela consolida o gate. Nenhuma fase pode ser marcada como concluída sem todos os itens aplicáveis.
+
+| Fase | Objetivo | Escopo mínimo | Dependência | Evidência obrigatória | Critério objetivo | Condição impeditiva | Resultado esperado |
+|---|---|---|---|---|---|---|---|
+| 0 | Linha de base verificável | Testes, lint, versão, correção documental, protocolo de evidência | — | Saídas literais dos comandos; confirmação de versão; status de CI | Comandos executados; divergências corrigidas ou registradas; baseline versionado | Documento público descrevendo funcionalidade inexistente; prova baseada só em `reports/`; mudança de versão | Retrato confiável do estado atual |
+| 1 | Qualidade da tradução | Corpus e conjunto dourado versionados; avaliação automática e humana; glossário/placeholders no fluxo | Fase 0 | Corpus, script, resultados brutos, relatórios de revisão, prova de execução offline | 0 perda de chave/placeholder; 100% de termos obrigatórios; adequação/fluência ≥ 4,0/5,0; nenhuma amostra crítica < 3,0; reprodutibilidade | Avaliação só heurística; corpus não versionado; qualquer placeholder perdido; ausência de idiomas não latinos | Decisão fundamentada que libera ou bloqueia a GUI |
+| 2 | Confiabilidade do núcleo | Tradução de arquivo ponta a ponta; escrita atômica; flags; device; offline; sync multiarquivo; placeholders; erros | Fase 1 | Testes novos e de falha; execução manual em projeto de exemplo; matriz de erros | Estrutura/metadados/placeholders preservados; nenhuma escrita parcial; flags simétricas; device e offline conforme documentado; sync multiarquivo e placeholders corretos; suíte aprovada | Risco de corrupção/sobrescrita; comportamento divergente da documentação; correção só no motor padrão | Núcleo seguro para GUI |
+| 3 | GUI | Fluxo completo sem terminal; revisão; acessibilidade; reaproveitamento do núcleo | Fases 1 e 2 | Demonstração reproduzível; testes de interface; checklist de acessibilidade; prova de CLI intacta | Fluxo completo sem terminal; zero duplicação de regra; operações destrutivas com confirmação; acessibilidade aprovada; paridade CLI/GUI | Dependência de serviço remoto; GUI que degrade a CLI; funcionalidade exclusiva da GUI; fases anteriores não aprovadas | Interface para público não técnico |
+| 4 | Experiência completa | Glossário, perfis, retomada, relatórios, empacotamento, onboarding | Fase 3 | Cenário documentado; testes de retomada; instalação verificada; documentação revisada | Uso por terceiro só com a documentação; nenhuma perda em retomada; relatório auditável; instalação reproduzível | Conhecimento interno não documentado; instalação não reproduzível; relatório insuficiente | Produto de ponta a ponta |
+| 5 | Expansão de formatos | Gettext/CSV e placeholders por formato; plurais quando aplicável | Fases 1–4 (ou repriorização registrada) | Especificação; testes de round-trip/validação/sync/tradução; corpus por formato | Round-trip sem perda; 100% de placeholders preservados; zero regressão; matriz coerente | Formato sem estratégia de placeholder; regressão; documentação não validada | Cobertura sustentável guiada por necessidade |
+
+**Regra transversal:** toda fase exige suíte completa aprovada, lint/format aprovados, versão `0.0.1` preservada e nenhuma regressão em formatos ou motores já suportados.
+
+---
+
+## E. Marco de qualidade linguística
+
+Este marco é **condição de entrada** para a GUI completa. Ele não é um relatório; é um gate.
+
+### E.1 Objetivo do marco
+
+Demonstrar, com evidência independente e reproduzível, que a saída do Poliglota é utilizável em interface real, e não apenas estruturalmente correta.
+
+### E.2 Requisitos do marco
+
+1. **Corpus versionado** com, no mínimo, 200 entradas por par de idiomas avaliado, cobrindo: rótulos curtos, frases completas, mensagens de erro, plurais, termos técnicos, placeholders, textos com pontuação e textos longos.
+2. **Conjunto dourado** com tradução de referência revisada, armazenado no repositório, com licença compatível.
+3. **Idiomas mínimos:** um latino próximo da origem, um latino distante e um não latino (por exemplo, `pt→es`, `pt→de`, `pt→ja`).
+4. **Revisão humana independente:** pelo menos um revisor por idioma, sem participação na implementação avaliada, com escala explícita e amostragem registrada.
+5. **Avaliação automática de estrutura:** chaves, placeholders, vazios, truncamento, idioma de saída e aderência ao glossário.
+6. **Reprodutibilidade:** comando único documentado, ambiente declarado, modelo e versão registrados, execução sem rede.
+
+### E.3 Limiares de aprovação
+
+| Dimensão | Limiar |
+|---|---|
+| Integridade de chaves | 100% |
+| Preservação de placeholders | 100% |
+| Aderência a termos obrigatórios do glossário | 100% |
+| Traduções vazias ou truncadas | 0 |
+| Média de adequação (escala 1–5) | ≥ 4,0 |
+| Média de fluência (escala 1–5) | ≥ 4,0 |
+| Amostras críticas abaixo de 3,0 | 0 |
+| Divergência entre execuções idênticas | 0, ou explicada e aceita formalmente |
+
+### E.4 O que não conta como aprovação
+
+- Score heurístico gerado pelo mesmo modelo que traduziu.
+- Amostra sem revisão humana.
+- Relatório em `reports/` sem versão no Git.
+- Resultado de um único idioma.
+- Corpus criado após a avaliação para justificar o resultado.
+
+### E.5 Consequência
+
+Enquanto o marco não for aprovado:
+
+- a Fase 3 (GUI) não começa;
+- nenhuma fase pode ser declarada concluída por “funcionar na prática”;
+- o produto permanece em `0.0.1` com status de qualidade não comprovado.
+
+---
+
+## F. Critérios para avaliação externa
+
+Um avaliador externo deve conseguir repetir a avaliação sem acesso privilegiado ao ambiente do autor.
+
+### F.1 Reprodutibilidade
+
+- Commit exato avaliado, identificado por hash.
+- Instruções de ambiente: sistema operacional, versão de Python, dependências e extras.
+- Comandos únicos para teste, lint, versão e avaliação de qualidade.
+- Nenhuma dependência de rede, de cache oculto ou de arquivo fora do repositório.
+- Modelos necessários descritos com origem, licença e forma de obtenção pelo avaliador.
+
+### F.2 Evidência
+
+- Saídas brutas dos comandos, com data e ambiente.
+- Corpus, conjunto dourado e script de avaliação versionados.
+- Relatórios de revisão humana com identificação, idioma, escala e quantidade.
+- Matriz de resultados por par de idiomas e por motor.
+
+### F.3 Critérios de aceitação externa
+
+- O produto faz o que a documentação diz, sem interpretação.
+- O fluxo de arquivo funciona ponta a ponta e não corrompe dados.
+- Placeholders e chaves são preservados em 100% dos casos testados.
+- A qualidade linguística atende aos limiares da seção E.
+- A CLI funciona de forma independente da GUI.
+- O comportamento offline é demonstrável nos dois cenários (modelo presente e ausente).
+- Licenças de código e de modelos são compatíveis com o uso declarado.
+
+### F.4 Critérios de rejeição
+
+- Divergência entre documentação e comportamento.
+- Evidência não reproduzível ou dependente de artefato não versionado.
+- Qualquer perda de dados, chave ou placeholder.
+- Dependência oculta de rede, telemetria ou serviço externo.
+- Ausência de avaliação humana de qualidade.
+
+---
+
+## G. Riscos e limitações
+
+### G.1 Fatos verificados
+
+| Risco / limitação | Impacto | Estado |
+|---|---|---|
+| `translate` não traduz arquivos, apenas um texto posicional | Não existe fluxo de produto ponta a ponta; GUI não teria núcleo para consumir | Fato verificado |
+| Motor PyTorch não preserva placeholders nem aplica glossário | Tradução pode quebrar interpolação e terminologia | Fato verificado |
+| Flags de validação com `default=True` e `store_true` | Usuário não consegue desativar verificações pela CLI | Fato verificado |
+| `--device gpu` é estrito no código e na documentação | Não é defeito; exige decisão de produto (manter estrito ou criar alias permissivo) | Fato verificado |
+| Cache offline procura `hub/<org>--<nome>` em vez de `hub/models--<org>--<nome>` | Modo offline do Marian falha mesmo com modelo presente (reproduzido) | Fato verificado |
+| `MariansNMTAdapter.translate()` reinsere placeholders duas vezes | Tags duplicadas na API pública do motor | Fato verificado por inspeção |
+| Sync/validate JSON/YAML/XML correlacionam por `module` inexistente | Chaves erradas copiadas/reportadas com múltiplos arquivos por locale | Fato verificado por inspeção |
+| Whitelist do Marian cobre 4 modelos; benchmarks citam mBART/NLLB | `--model` rejeita modelos usados nos relatórios internos | Fato verificado |
+| Pares multilíngues do Marian (pt→de/ja/ko/pl/ru/it) sem token de destino | Alegação de suporte não comprovada | Fato verificado por inspeção |
+| README nega download automático | `from_pretrained` sem `local_files_only` pode baixar | Fato verificado |
+| `SECURITY.md` nega dependências de runtime | Informação de segurança incorreta | Fato verificado |
+| Qualidade linguística sem avaliação humana versionada | Não há base para afirmar qualidade; bloqueia GUI | Fato verificado |
+| Relatórios internos em `reports/` não versionados | Não servem como evidência de aprovação | Fato verificado |
+| Relatórios internos divergem entre si e do código | Decisões podem ser tomadas sobre dados obsoletos | Fato verificado |
+| Placeholders suportados apenas em ARB | Formatos genéricos não têm proteção equivalente | Fato verificado |
+| Glossário sem plural/gênero/morfologia | Cobertura limitada para idiomas com flexão | Fato verificado |
+| Sem CSV/Gettext | Cobertura de formatos incompleta | Fato verificado |
+| Sem GUI | Público não técnico depende de terminal | Fato verificado |
+| CI não instala stack de ML | Testes de PyTorch ficam `skipped` no CI | Fato verificado |
+| Benchmarks cobrem `t5-small`, não o motor padrão | Desempenho do Marian não está medido | Fato verificado |
+
+### G.2 Hipóteses a validar
+
+| Hipótese | Consequência se confirmada | Como validar |
+|---|---|---|
+| M2M100 sem `forced_bos_token_id` pode gerar saída no idioma de origem | Pares pt→de/ja/ko/pl/ru/it declarados não funcionam | Executar cada par com `facebook/m2m100_418M` e verificar idioma de saída |
+| `gpu` estrito é decisão de produto ainda não formalizada | Usuário pode esperar fallback; manutenção da documentação depende da decisão | Decidir e registrar o contrato; ajustar código ou docs |
+| Relatórios de qualidade foram gerados com dados desalinhados | Conclusões de qualidade não são confiáveis | Refazer avaliação com corpus e script versionados |
+| Pares fora de `en/es/fr/pt` declarados como suportados não produzem saída correta sem `--model` | Expectativa do usuário frustrada | Testar cada par declarado com modelo explícito e verificar idioma de saída |
+| Performance em CPU é aceitável para arquivos grandes | Fluxo pode ser lento em máquinas sem GPU | Medir com corpus real e registrar tempo por 1.000 entradas |
+
+### G.3 Limitações estruturais
+
+- O projeto não empacota modelos; o usuário precisa providenciar cache e licenças. Sem `HF_HUB_OFFLINE=1`, a biblioteca Hugging Face pode baixar pesos, e o modo offline verificado está quebrado (B.6).
+- A qualidade depende do modelo escolhido; o projeto não treina modelos.
+- Idiomas não latinos exigem validação específica de tokenização e pontuação.
+- A ausência de estabilidade de API em `0.0.1` significa que mudanças podem ocorrer entre versões.
+- A GUI, quando existir, não pode se tornar dependência da CLI.
+
+### G.4 Riscos de processo
+
+- Declarar fase concluída com base em execução manual não registrada.
+- Confundir “testes passando” com “produto validado”.
+- Priorizar GUI antes de qualidade e confiabilidade.
+- Aceitar relatório não versionado como prova.
+- Corrigir documentação para coincidir com bug em vez de corrigir o bug (ou vice-versa) sem decisão explícita.
+
+---
+
+## Resumo executivo do roadmap
+
+1. O projeto tem arquitetura coerente, testes verdes e base modular real.
+2. O produto ainda **não traduz arquivos**: traduz um texto por vez.
+3. A qualidade linguística **não está comprovada** por avaliação independente.
+4. Existem divergências concretas entre documentação e código que precisam ser resolvidas na Fase 0.
+5. A GUI é etapa posterior e só começa após qualidade (Fase 1) e confiabilidade (Fase 2).
+6. A versão permanece `0.0.1`; nenhuma fase deste roadmap altera a versão.
+7. Nenhuma fase pode ser aprovada sem evidência reproduzível e versionada.
+8. A reauditoria de 2026-10-26 confirmou, por reprodução, que a verificação de cache offline está quebrada e encontrou defeitos adicionais no núcleo (duplicação de placeholders no Marian, sync multiarquivo em JSON/YAML/XML) e conflitos internos na documentação.
+9. O caminho crítico permanece Fase 0 → Fase 1 → Fase 2; a Fase 0 já possui linha de base reproduzível registrada neste documento.
