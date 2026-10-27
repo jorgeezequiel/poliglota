@@ -548,9 +548,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
                 text = str(decoded_text).strip()
                 text = text.replace("</s>", "").strip()
                 # Strip language tokens at start: en_XX, pt_XX (mBART format)
-                text = re.sub(
-                    r"^[a-z]{2,3}(?:_[A-Z][a-z]*|_[A-Z]{2})\s+", "", text
-                ).strip()
+                text = re.sub(r"^[a-z]{2,3}(?:_[A-Z][a-z]*|_[A-Z]{2})\s+", "", text).strip()
                 result.append(text)
         elif self._is_nllb_model():
             # NLLB special tokens are properly recognized, so skip_special_tokens=True

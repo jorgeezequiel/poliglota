@@ -49,10 +49,10 @@ jobs:
       - name: Consistência de versão
         run: python -m pytest tests/test_version_consistency.py -v
 
-  tests:
-    name: Testes (${{ matrix.os }} / Python ${{ matrix.python-version }})
+  unit-tests:
+    name: Testes Unitários (${{ matrix.os }} / Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -95,30 +95,169 @@ jobs:
       - name: Criar diretório de relatórios
         run: python -c "from pathlib import Path; Path('reports/test-results').mkdir(parents=True, exist_ok=True)"
 
-      - name: Executar testes
+      - name: Executar testes unitários (sem GPU/CUDA)
         run: >
-          python -m pytest -q
-          --junitxml=reports/test-results/junit-${{ matrix.os }}-py${{ matrix.python-version }}.xml
+          python -m pytest -q -m unit
+          --junitxml=reports/test-results/junit-unit-${{ matrix.os }}-py${{ matrix.python-version }}.xml
+          --tb=short
 
       - name: Publicar resultados JUnit
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: junit-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: reports/test-results/*.xml
+          name: junit-unit-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: reports/test-results/junit-unit-*.xml
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Resumo dos resultados
+  integration-cpu:
+    name: Testes Integração CPU (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Cache Hugging Face Hub (modelos PyTorch)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-cpu-${{ runner.os }}-py${{ matrix.python-version }}
+          restore-keys: |
+            hf-models-cpu-${{ runner.os }}-
+            hf-models-
+
+      - name: Instalar dependências de desenvolvimento + GPU stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,gpu]"
+
+      - name: Validar PyTorch/Transformers instalados
+        shell: python
+        run: |
+          import torch
+          import transformers
+          print(f"PyTorch {torch.__version__}")
+          print(f"Transformers {transformers.__version__}")
+          print(f"CUDA disponível: {torch.cuda.is_available()}")
+
+      - name: Criar diretório de relatórios
+        run: python -c "from pathlib import Path; Path('reports/test-results').mkdir(parents=True, exist_ok=True)"
+
+      - name: Executar testes integração (CPU, sem GPU)
+        env:
+          POLIGLOTA_TEST_CPU_ONLY: "1"
+          HF_HUB_OFFLINE: "0"
+        run: >
+          python -m pytest -q -m "not gpu" --ignore=tests/test_version_consistency.py
+          --junitxml=reports/test-results/junit-integration-cpu-${{ matrix.os }}-py${{ matrix.python-version }}.xml
+          --tb=short 2>&1
+
+      - name: Publicar resultados JUnit
         if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-integration-cpu-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: reports/test-results/junit-integration-cpu-*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  integration-gpu:
+    name: Testes Integração GPU (CUDA)
+    runs-on: [self-hosted, gpu, cuda]
+    timeout-minutes: 60
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configurar Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Cache Hugging Face Hub (modelos PyTorch GPU)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-gpu-cuda-py3.13
+          restore-keys: |
+            hf-models-gpu-cuda-
+            hf-models-
+
+      - name: Validar CUDA disponível
+        shell: python
+        run: |
+          import torch
+          assert torch.cuda.is_available(), "CUDA not available on GPU runner"
+          print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
+          print(f"CUDA Capability: {torch.cuda.get_device_capability(0)}")
+
+      - name: Instalar dependências de desenvolvimento + GPU stack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,gpu]"
+
+      - name: Criar diretório de relatórios
+        run: python -c "from pathlib import Path; Path('reports/test-results').mkdir(parents=True, exist_ok=True)"
+
+      - name: Executar testes integração GPU (com mBART/NLLB)
+        env:
+          HF_HUB_OFFLINE: "0"
+          POLIGLOTA_DEVICE: "auto"
+        run: >
+          python -m pytest -q -m gpu
+          --junitxml=reports/test-results/junit-integration-gpu-cuda-py3.13.xml
+          --tb=short 2>&1
+
+      - name: Publicar resultados JUnit
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-integration-gpu-cuda-py3.13
+          path: reports/test-results/junit-integration-gpu-*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+  summary:
+    name: Resumo dos Resultados
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [quality, unit-tests, integration-cpu]
+
+    steps:
+      - name: Download artefatos JUnit
+        uses: actions/download-artifact@v4
+        with:
+          path: reports/test-results
+
+      - name: Compilar resumo
         shell: python
         run: |
           import glob
           import os
           import xml.etree.ElementTree as ET
 
-          files = sorted(glob.glob("reports/test-results/*.xml"))
+          files = sorted(glob.glob("reports/test-results/**/junit-*.xml", recursive=True))
           total = failures = errors = skipped = 0
+          by_category = {}
+
           for path in files:
               root = ET.parse(path).getroot()
               suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
@@ -129,13 +268,20 @@ jobs:
                   skipped += int(suite.get("skipped", 0))
 
           lines = [
-              "## Resultados dos testes",
+              "## Resumo de Testes CI",
               "",
               f"- Arquivos JUnit: {len(files)}",
-              f"- Total: {total}",
-              f"- Falhas: {failures}",
-              f"- Erros: {errors}",
-              f"- Ignorados: {skipped}",
+              f"- **Total de testes**: {total}",
+              f"- **Sucessos**: {total - failures - errors - skipped}",
+              f"- **Falhas**: {failures}",
+              f"- **Erros**: {errors}",
+              f"- **Ignorados/Skipped**: {skipped}",
+              "",
+              "### Categoria de Jobs",
+              "- **quality** (lint, format, version check): Ubuntu 3.13",
+              "- **unit-tests** (testes unitários): Ubuntu/Windows/macOS × Python 3.11/3.12/3.13",
+              "- **integration-cpu** (PyTorch CPU): Ubuntu/Windows/macOS × Python 3.11/3.12/3.13",
+              "- **integration-gpu** (PyTorch GPU/CUDA): self-hosted (main branch only)",
           ]
           text = "\n".join(lines) + "\n"
           print(text)

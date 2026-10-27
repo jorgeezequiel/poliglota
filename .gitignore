@@ -183,3 +183,7 @@ Desktop.ini
 # ----------------------------
 *.patch
 *.stackdump
+
+# Audit & Development artifacts (Fase 2)
+docs/audits/
+reports/test-results/

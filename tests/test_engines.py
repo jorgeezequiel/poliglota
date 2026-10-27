@@ -526,6 +526,11 @@ class TestTranslateCommand:
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
             patch.object(
                 cli_module,
+                "_select_default_motor",
+                return_value="Helsinki-NLP/opus-mt-en-es",
+            ),
+            patch.object(
+                cli_module,
                 "_translate_with_placeholders",
                 side_effect=ValueError("bad input"),
             ),
@@ -549,6 +554,11 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(
+                cli_module,
+                "_select_default_motor",
+                return_value="Helsinki-NLP/opus-mt-en-es",
+            ),
             patch.object(
                 cli_module,
                 "_translate_with_placeholders",
@@ -575,6 +585,11 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(
+                cli_module,
+                "_select_default_motor",
+                return_value="Helsinki-NLP/opus-mt-en-es",
+            ),
             patch.object(
                 cli_module,
                 "_translate_with_placeholders",
