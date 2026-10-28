@@ -640,6 +640,11 @@ def _resolve_device_name(device: str | None) -> str:
     return resolved
 
 
+def resolve_device_name(device: str | None) -> str:
+    """Public wrapper for runtime device resolution."""
+    return _resolve_device_name(device)
+
+
 def _get_engine(
     engine_name: str,
     model_name: str,
@@ -809,6 +814,33 @@ def _select_default_motor(source_lang: str, target_lang: str) -> str:
         "No available model supports this language combination."
     )
     raise ValueError(msg)
+
+
+def select_default_motor(source_lang: str, target_lang: str) -> str:
+    """Public wrapper for default motor selection."""
+    return _select_default_motor(source_lang, target_lang)
+
+
+def translate_with_placeholders(
+    text: str,
+    source_locale: str,
+    target_locale: str,
+    *,
+    preserve_placeholders: bool,
+    model_name: str,
+    device: str,
+    batch_size: int,
+) -> tuple[str, dict[str, int], float]:
+    """Public wrapper for single-string placeholder-aware translation."""
+    return _translate_with_placeholders(
+        text,
+        source_locale,
+        target_locale,
+        preserve_placeholders=preserve_placeholders,
+        model_name=model_name,
+        device=device,
+        batch_size=batch_size,
+    )
 
 
 def _run_translate(
@@ -1007,27 +1039,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv = sys.argv[1:]
 
     if not argv:
-        try:
-            from . import cli_interactive
+        from . import cli_interactive
 
-            return cli_interactive.run_interactive()
-        except Exception:
-            parser = _build_parser()
-            parser.print_help()
-            return 2
+        return cli_interactive.run_interactive()
 
     parser = _build_parser()
-    try:
-        args = parser.parse_args(argv)
-    except SystemExit:
-        raise
-    except Exception:
-        try:
-            from . import cli_interactive
-
-            return cli_interactive.run_interactive()
-        except Exception:
-            raise
+    args = parser.parse_args(argv)
 
     if getattr(args, "command", None) == "validate":
         return _run_validate(
