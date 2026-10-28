@@ -218,7 +218,9 @@ def _get_registry() -> FormatRegistry:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Poliglota: validate and sync localization files.")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=False)
+    subparsers.add_parser("interactive", help="launch interactive guided flow")
+    subparsers.add_parser("guiado", help="lançar fluxo interativo guiado")
 
     validate_parser = subparsers.add_parser("validate", help="validate locale files")
     validate_parser.add_argument(
@@ -1000,10 +1002,34 @@ def _run_translate(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected command and return the process exit code."""
     _configure_console_encoding()
-    parser = _build_parser()
-    args = parser.parse_args(argv)
 
-    if args.command == "validate":
+    if argv is None:
+        argv = sys.argv[1:]
+
+    if not argv:
+        try:
+            from . import cli_interactive
+
+            return cli_interactive.run_interactive()
+        except Exception:
+            parser = _build_parser()
+            parser.print_help()
+            return 2
+
+    parser = _build_parser()
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit:
+        raise
+    except Exception:
+        try:
+            from . import cli_interactive
+
+            return cli_interactive.run_interactive()
+        except Exception:
+            raise
+
+    if getattr(args, "command", None) == "validate":
         return _run_validate(
             args.root,
             args.source,
@@ -1014,11 +1040,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             check_placeholders=args.check_placeholders,
             check_glossary=args.check_glossary,
         )
-    if args.command == "sync":
+    if getattr(args, "command", None) == "sync":
         return _run_sync(args.root, args.source, args.dry_run, args.format)
-    if args.command == "list-locales":
+    if getattr(args, "command", None) == "list-locales":
         return _run_list_locales(args.root, args.format)
-    if args.command == "translate":
+    if getattr(args, "command", None) == "translate":
         return _run_translate(
             args.text,
             args.source,
@@ -1030,6 +1056,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_size=args.batch_size,
             json_output=args.json_output,
         )
+    if (
+        getattr(args, "command", None) == "interactive"
+        or getattr(args, "command", None) == "guiado"
+    ):
+        from . import cli_interactive
+
+        return cli_interactive.run_interactive()
 
     parser.error(f"Unsupported command: {args.command}")
     return 2
