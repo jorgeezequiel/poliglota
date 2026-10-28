@@ -41,7 +41,9 @@ addopts = ["-ra", "--strict-config", "--strict-markers"]
 filterwarnings = ["error"]
 markers = [
     "unit: unit tests for isolated behavior",
+    "gpu: tests that require GPU/CUDA-capable hardware or ML runtime support",
 ]
+
 
 [tool.ruff]
 target-version = "py311"

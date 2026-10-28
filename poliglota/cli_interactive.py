@@ -32,7 +32,7 @@ def _prompt_input(prompt: str, default: str | None = None) -> str:
 
 
 def _prompt_yes_no(prompt: str, default: bool = False) -> bool:
-    """Prompt the user for a yes/no value."""
+    """Prompt the user for a yes/no value with a negative default."""
     default_str = "S/N" if default else "s/N"
     true_values = {"s", "sim", "y", "yes", "true", "1"}
     false_values = {"n", "nao", "no", "false", "0"}
@@ -175,8 +175,8 @@ def run_interactive() -> int:
 
         is_cached = gpu.check_model_cached(model)
         if not is_cached:
-            print(f"Modelo {model} não encontrado no cache local.")  # noqa: T201
-            print("Será necessário download da internet (~1-3 GB, dependendo do modelo).")  # noqa: T201
+            print(f"Modelo {model} não encontrado ou incompleto no cache local.")  # noqa: T201
+            print("Nenhum download será iniciado sem consentimento explícito.")  # noqa: T201
             if not _prompt_yes_no(f"Baixar e preparar o modelo {model}?", default=False):
                 return 0
             try:
@@ -186,9 +186,12 @@ def run_interactive() -> int:
                 tokenizer = transformers.AutoTokenizer.from_pretrained(model)
                 model_obj = transformers.AutoModelForSeq2SeqLM.from_pretrained(model)
                 del tokenizer, model_obj
+                if not gpu.check_model_cached(model):
+                    print(f"Erro: o modelo {model} não ficou pronto localmente para uso.")  # noqa: T201
+                    return 1
             except ImportError:
                 print("Erro: depende de 'transformers' para baixar o modelo localmente.")  # noqa: T201
-                return 0
+                return 1
             except Exception as exc:  # pragma: no cover - defensive, requested graceful exit  # noqa: BLE001
                 print(f"Erro ao baixar/preparar o modelo {model}: {exc}")  # noqa: T201
                 return 1

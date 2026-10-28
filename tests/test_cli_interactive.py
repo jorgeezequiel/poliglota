@@ -104,7 +104,7 @@ def test_consent_yes_model_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
         patch("poliglota.cli_interactive.discover_resources", return_value={"en": [], "pt": []}),
         patch("poliglota.cli_interactive.cli.select_default_motor", return_value="model-123"),
         patch("poliglota.cli_interactive.cli.resolve_device_name", return_value="cpu"),
-        patch("poliglota.cli_interactive.gpu.check_model_cached", return_value=False),
+        patch("poliglota.cli_interactive.gpu.check_model_cached") as mock_cached,
         patch("poliglota.cli_interactive.translate_resource_files") as translate_files,
         patch("poliglota.cli_interactive.cli.translate_with_placeholders") as translate_text,
     ):
@@ -112,8 +112,11 @@ def test_consent_yes_model_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
         mock_registry.return_value = mock_registry_inst
         mock_registry_inst.names.return_value = ["arb"]
         mock_registry_inst.get.return_value = MagicMock()
-        with patch("transformers.AutoTokenizer.from_pretrained") as tokenizer_factory, \
-             patch("transformers.AutoModelForSeq2SeqLM.from_pretrained") as model_factory:
+        mock_cached.side_effect = [False, True]
+        with (
+            patch("transformers.AutoTokenizer.from_pretrained") as tokenizer_factory,
+            patch("transformers.AutoModelForSeq2SeqLM.from_pretrained") as model_factory,
+        ):
             tokenizer_factory.return_value = MagicMock()
             model_factory.return_value = MagicMock()
             result = cli_interactive.run_interactive()
@@ -171,8 +174,10 @@ def test_model_download_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         mock_registry_inst.names.return_value = ["arb"]
         mock_registry_inst.get.return_value = MagicMock()
         with (
-            patch("transformers.AutoTokenizer.from_pretrained",
-                  side_effect=RuntimeError("download failed")),
+            patch(
+                "transformers.AutoTokenizer.from_pretrained",
+                side_effect=RuntimeError("download failed"),
+            ),
             patch("transformers.AutoModelForSeq2SeqLM.from_pretrained"),
         ):
             result = cli_interactive.run_interactive()

@@ -340,8 +340,33 @@ def get_device_info() -> dict[str, object]:
     return info
 
 
+def _is_nonempty_file(path: Path) -> bool:
+    """Return True when a path resolves to a readable non-empty regular file."""
+    try:
+        if path.is_symlink():
+            target = path.resolve(strict=True)
+            if not target.exists() or not target.is_file():
+                return False
+            return target.stat().st_size > 0
+
+        if not path.exists() or not path.is_file():
+            return False
+        return path.stat().st_size > 0
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
 def check_model_cached(model_name: str) -> bool:
-    """Return True when a Hugging Face model is already cached locally."""
+    """Return True when a Hugging Face model is already cached locally and complete.
+
+    Validates that the model snapshot contains essential artifacts:
+    - config.json (required for all models)
+    - At least one weights file or safetensors archive
+    - Tokenizer artifacts (at least one of: tokenizer.json, tokenizer.model, etc.)
+
+    Returns False for incomplete, empty, or inaccessible caches.
+    Does not make network calls or download anything.
+    """
     if not model_name or not isinstance(model_name, str):
         return False
 
@@ -349,6 +374,7 @@ def check_model_cached(model_name: str) -> bool:
     if not normalized_name:
         return False
 
+    result = False
     try:
         cache_dir = os.environ.get("HF_HOME")
         if not cache_dir:
@@ -358,19 +384,71 @@ def check_model_cached(model_name: str) -> bool:
         root = Path(cache_dir)
         snapshots = root / f"models--{model_key}" / "snapshots"
 
-        if not snapshots.exists():
+        if not snapshots.exists() or not snapshots.is_dir():
             result = False
         else:
-            result = False
             for snapshot_dir in snapshots.iterdir():
                 try:
-                    if (snapshot_dir / "config.json").is_file():
+                    if not snapshot_dir.exists() or not snapshot_dir.is_dir():
+                        continue
+
+                    config_path = snapshot_dir / "config.json"
+                    if not _is_nonempty_file(config_path):
+                        continue
+
+                    weight_patterns = [
+                        "pytorch_model.bin",
+                        "model.safetensors",
+                        "model.pth",
+                        "flax_model.msgpack",
+                    ]
+                    has_weights = any(
+                        _is_nonempty_file(snapshot_dir / pattern) for pattern in weight_patterns
+                    )
+                    if not has_weights:
+                        for candidate in sorted(snapshot_dir.glob("*.bin")):
+                            if _is_nonempty_file(candidate):
+                                has_weights = True
+                                break
+                        if not has_weights:
+                            for candidate in sorted(snapshot_dir.glob("*.safetensors")):
+                                if _is_nonempty_file(candidate):
+                                    has_weights = True
+                                    break
+
+                    if not has_weights:
+                        continue
+
+                    tokenizer_patterns = [
+                        "tokenizer.json",
+                        "tokenizer.model",
+                        "spiece.model",
+                        "sentencepiece.model",
+                        "vocab.txt",
+                        "vocab.json",
+                        "tokenizer_config.json",
+                    ]
+                    has_tokenizer = any(
+                        _is_nonempty_file(snapshot_dir / pattern) for pattern in tokenizer_patterns
+                    )
+                    if not has_tokenizer:
+                        for candidate in sorted(snapshot_dir.glob("*tokenizer*")):
+                            if _is_nonempty_file(candidate):
+                                has_tokenizer = True
+                                break
+
+                    if has_tokenizer:
                         result = True
                         break
+
                 except (OSError, TypeError, ValueError):
                     continue
     except (OSError, ValueError, TypeError):
         result = False
 
-    logger.debug("Checking model cache for %s: %s", model_name, "found" if result else "not found")
+    logger.debug(
+        "Checking model cache for %s: %s",
+        model_name,
+        "found" if result else "not found",
+    )
     return result

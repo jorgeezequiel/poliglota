@@ -216,28 +216,85 @@ def _get_registry() -> FormatRegistry:
     return _registry
 
 
-def _run_prepare_model(args: argparse.Namespace) -> int:
-    """Download and cache a Hugging Face translation model for offline use."""
+def _prompt_yes_no(prompt: str, default: bool = False) -> bool:
+    """Prompt for an explicit yes/no answer with a negative default."""
+    default_label = "S/N" if default else "s/N"
+    while True:
+        try:
+            answer = input(f"{prompt} [{default_label}] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return default
+
+        if answer == "":
+            return default
+        if answer in {"s", "sim", "y", "yes", "true", "1"}:
+            return True
+        if answer in {"n", "nao", "no", "false", "0"}:
+            return False
+
+        print(f"Entrada inválida. Use s/Sim ou n/Não. [{default_label}]")
+
+
+def _confirm_model_download(model_name: str, *, default: bool = False) -> bool:
+    """Request explicit consent before downloading a model for local preparation."""
+    print(f"Modelo ausente ou incompleto: {model_name}")
+    print("Este comando pode baixar artefatos do Hugging Face e prepará-los localmente.")
+    return _prompt_yes_no(f"Baixar e preparar o modelo {model_name}?", default=default)
+
+
+def _prepare_model_locally(model_name: str, device: str) -> bool:
+    """Prepare a model from the canonical Hugging Face cache path with explicit consent."""
     try:
-        gpu.detect_device(args.device, strict=True)
-    except ValueError:
-        logger.exception("Invalid device specification")
-        return 1
+        gpu.detect_device(device, strict=True)
+    except ValueError as exc:
+        logger.exception("Invalid device specification for model preparation")
+        raise RuntimeError(str(exc)) from exc
 
     try:
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
-    except ImportError:
-        logger.exception("prepare-model requires [gpu] extra")
+    except ImportError as exc:
+        msg = "prepare-model requires the optional [gpu] dependency set"
+        raise RuntimeError(msg) from exc
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        del tokenizer, model
+    except (OSError, ValueError, RuntimeError) as exc:
+        msg = f"Failed to prepare model {model_name}"
+        raise RuntimeError(msg) from exc
+
+    if not gpu.check_model_cached(model_name):
+        msg = f"Model {model_name} was not validated as a complete local cache after preparation"
+        raise RuntimeError(msg)
+
+    logger.info("Model %s prepared and cached successfully.", model_name)
+    return True
+
+
+def _run_prepare_model(args: argparse.Namespace) -> int:
+    """Download and cache a Hugging Face translation model for offline use."""
+    model_name = str(args.model).strip()
+    if not model_name:
+        print("Error: --model is required.")
         return 1
 
     try:
-        AutoTokenizer.from_pretrained(args.model)
-        AutoModelForSeq2SeqLM.from_pretrained(args.model)
-    except (OSError, ValueError, RuntimeError):
-        logger.exception("Failed to prepare model %s", args.model)
+        if gpu.check_model_cached(model_name):
+            print(f"Modelo {model_name} já está preparado localmente.")
+            return 0
+    except (OSError, ValueError, TypeError):
+        pass
+
+    try:
+        if not _confirm_model_download(model_name, default=False):
+            print("Preparação cancelada. Nenhum modelo foi baixado.")
+            return 0
+        _prepare_model_locally(model_name, args.device)
+    except RuntimeError as exc:
+        print(f"Error: {exc}")
         return 1
 
-    logger.info("Model %s prepared and cached successfully.", args.model)
     return 0
 
 
