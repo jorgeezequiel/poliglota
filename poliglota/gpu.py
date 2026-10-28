@@ -381,10 +381,32 @@ def check_model_cached(model_name: str) -> bool:
             cache_dir = str(Path.home() / ".cache" / "huggingface")
 
         model_key = normalized_name.replace("/", "--")
-        root = Path(cache_dir)
-        snapshots = root / f"models--{model_key}" / "snapshots"
+        dir_candidates = [
+            Path(cache_dir),
+            Path(cache_dir) / "hub",
+        ]
+        snapshot_roots = []
+        for root in dir_candidates:
+            if not root.exists():
+                continue
+            snapshot_roots.extend(
+                [
+                    root / f"models--{model_key}",
+                    root / model_key,
+                    root / "hub" / f"models--{model_key}",
+                    root / "hub" / model_key,
+                ]
+            )
 
-        if not snapshots.exists() or not snapshots.is_dir():
+        snapshot_roots = list(dict.fromkeys(snapshot_roots))
+        snapshots = None
+        for root in snapshot_roots:
+            candidate = root / "snapshots"
+            if candidate.exists() and candidate.is_dir():
+                snapshots = candidate
+                break
+
+        if snapshots is None or not snapshots.exists() or not snapshots.is_dir():
             result = False
         else:
             for snapshot_dir in snapshots.iterdir():

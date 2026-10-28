@@ -110,6 +110,23 @@ def test_verify_offline_with_real_hf_layout_cache_present(
 
 
 @pytest.mark.unit
+def test_check_model_cached_real_hf_hub_layout(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    cache_root = tmp_path / "hf-cache"
+    hub_root = cache_root / "hub"
+    snapshot = hub_root / "models--facebook--nllb-200-distilled-600M" / "snapshots" / "abc123"
+    snapshot.mkdir(parents=True, exist_ok=True)
+    (snapshot / "config.json").write_text('{"model_type": "nllb"}', encoding="utf-8")
+    (snapshot / "pytorch_model.bin").write_bytes(b"\0" * 128)
+    (snapshot / "tokenizer_config.json").write_text('{"tokenizer_class": "NLLBTokenizer"}', encoding="utf-8")
+    monkeypatch.setenv("HF_HOME", str(cache_root))
+
+    assert cli_module.gpu.check_model_cached("facebook/nllb-200-distilled-600M") is True
+
+
+@pytest.mark.unit
 def test_verify_offline_with_cache_missing(
     mock_environ: Callable[[str | None], None],
     mock_hf_cache_path: Path,
