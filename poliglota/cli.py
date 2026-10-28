@@ -216,6 +216,31 @@ def _get_registry() -> FormatRegistry:
     return _registry
 
 
+def _run_prepare_model(args: argparse.Namespace) -> int:
+    """Download and cache a Hugging Face translation model for offline use."""
+    try:
+        gpu.detect_device(args.device, strict=True)
+    except ValueError:
+        logger.exception("Invalid device specification")
+        return 1
+
+    try:
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    except ImportError:
+        logger.exception("prepare-model requires [gpu] extra")
+        return 1
+
+    try:
+        AutoTokenizer.from_pretrained(args.model)
+        AutoModelForSeq2SeqLM.from_pretrained(args.model)
+    except (OSError, ValueError, RuntimeError):
+        logger.exception("Failed to prepare model %s", args.model)
+        return 1
+
+    logger.info("Model %s prepared and cached successfully.", args.model)
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Poliglota: validate and sync localization files.")
     subparsers = parser.add_subparsers(dest="command", required=False)
@@ -344,6 +369,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Output JSON instead of plain text",
     )
+
+    prepare_model_parser = subparsers.add_parser(
+        "prepare-model",
+        help="Prepare (download) a translation model for offline use",
+    )
+    prepare_model_parser.add_argument(
+        "--model",
+        required=True,
+        help="Hugging Face model name to download and cache",
+    )
+    prepare_model_parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "cuda", "mps", "gpu"],
+        default="auto",
+        help="Device to validate for model preparation (default: auto)",
+    )
+    prepare_model_parser.set_defaults(func=_run_prepare_model)
 
     return parser
 
@@ -1045,6 +1087,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    if getattr(args, "func", None) is not None:
+        return args.func(args)
 
     if getattr(args, "command", None) == "validate":
         return _run_validate(

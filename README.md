@@ -100,6 +100,29 @@ poliglota translate --source pt_BR --target en_US --preserve-placeholders --json
 
 Se `--model` for omitido, o motor padrão é escolhido automaticamente para o par de idiomas. A ordem atual é `Helsinki-NLP/opus-mt-en-es`, `Helsinki-NLP/opus-mt-en-fr` e `Helsinki-NLP/opus-mt-tc-big-en-pt`; o primeiro cujo conjunto de idiomas contém origem **e** destino é usado. Na prática, a seleção automática cobre pares entre `en`, `es`, `fr` e `pt`; qualquer outro par falha com erro explícito e exige `--model` ou `POLIGLOTA_DEFAULT_MOTOR`. A variável `POLIGLOTA_DEFAULT_MOTOR` substitui completamente essa escolha.
 
+### Preparar modelo para uso offline
+
+Para baixar e cachear um modelo **antes** de usar tradução, utilize o comando `prepare-model`:
+
+```bash
+poliglota prepare-model --model Helsinki-NLP/opus-mt-en-pt --device auto
+```
+
+Opções:
+
+```bash
+poliglota prepare-model --model facebook/nllb-200-distilled-600M --device cuda
+poliglota prepare-model --model facebook/mbart-large-50-many-to-many-mmt --device cpu
+```
+
+O comando:
+- Baixa o modelo e tokenizer do Hugging Face Hub.
+- Cacheia os artefatos localmente em `$HF_HOME` (ou `~/.cache/huggingface` por padrão).
+- Valida a integridade do modelo (carrega config.json e verifica pesos).
+- Retorna código de saída 0 (sucesso) ou 1 (falha).
+
+Após `prepare-model` completar com sucesso, o modelo fica disponível para tradução **sem acesso à rede**, mesmo com `HF_HUB_OFFLINE=1` definido.
+
 ## Tradução local, modelos e offline
 
 ### Motores disponíveis
@@ -199,9 +222,9 @@ A versão oficial é declarada em `pyproject.toml` e espelhada em `poliglota/__i
 ```
 poliglota/
 ├── poliglota/            # pacote
-│   ├── cli.py            # CLI (validate, sync, list-locales, translate)
+│   ├── cli.py            # CLI (validate, sync, list-locales, translate, prepare-model)
 │   ├── config.py         # padrões usados pela CLI
-│   ├── gpu.py            # detecção/validação de dispositivo
+│   ├── gpu.py            # detecção/validação de dispositivo + cache de modelo
 │   ├── core/             # contratos independentes de formato e motor
 │   ├── formats/          # adaptadores ARB, JSON, YAML e XML + registry
 │   ├── engines/          # motores Marian/PyTorch, cache e RequestQueue

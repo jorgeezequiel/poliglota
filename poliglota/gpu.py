@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,7 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["detect_device", "get_device_info", "validate_vram"]
+__all__ = ["check_model_cached", "detect_device", "get_device_info", "validate_vram"]
 
 _TORCH_MIN_VERSION = (2, 7, 0)
 _TORCH_VERSION_PARTS = 3
@@ -336,3 +338,39 @@ def get_device_info() -> dict[str, object]:
 
     logger.debug("Detected CPU device info: name=%s", info["name"])
     return info
+
+
+def check_model_cached(model_name: str) -> bool:
+    """Return True when a Hugging Face model is already cached locally."""
+    if not model_name or not isinstance(model_name, str):
+        return False
+
+    normalized_name = model_name.strip()
+    if not normalized_name:
+        return False
+
+    try:
+        cache_dir = os.environ.get("HF_HOME")
+        if not cache_dir:
+            cache_dir = str(Path.home() / ".cache" / "huggingface")
+
+        model_key = normalized_name.replace("/", "--")
+        root = Path(cache_dir)
+        snapshots = root / f"models--{model_key}" / "snapshots"
+
+        if not snapshots.exists():
+            result = False
+        else:
+            result = False
+            for snapshot_dir in snapshots.iterdir():
+                try:
+                    if (snapshot_dir / "config.json").is_file():
+                        result = True
+                        break
+                except (OSError, TypeError, ValueError):
+                    continue
+    except (OSError, ValueError, TypeError):
+        result = False
+
+    logger.debug("Checking model cache for %s: %s", model_name, "found" if result else "not found")
+    return result

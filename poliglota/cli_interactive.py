@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from poliglota import cli
+from poliglota import cli, gpu
 from poliglota.formats.operations import discover_resources
 from poliglota.formats.registry_init import get_registry as get_global_registry
 from poliglota.translation_workflow import translate_resource_files
@@ -172,6 +172,26 @@ def run_interactive() -> int:
             default=str(root / ".poliglota_translated"),
         )
         output_dir = Path(out_str)
+
+        is_cached = gpu.check_model_cached(model)
+        if not is_cached:
+            print(f"Modelo {model} não encontrado no cache local.")  # noqa: T201
+            print("Será necessário download da internet (~1-3 GB, dependendo do modelo).")  # noqa: T201
+            if not _prompt_yes_no(f"Baixar e preparar o modelo {model}?", default=False):
+                return 0
+            try:
+                import importlib
+
+                transformers = importlib.import_module("transformers")
+                tokenizer = transformers.AutoTokenizer.from_pretrained(model)
+                model_obj = transformers.AutoModelForSeq2SeqLM.from_pretrained(model)
+                del tokenizer, model_obj
+            except ImportError:
+                print("Erro: depende de 'transformers' para baixar o modelo localmente.")  # noqa: T201
+                return 0
+            except Exception as exc:  # pragma: no cover - defensive, requested graceful exit  # noqa: BLE001
+                print(f"Erro ao baixar/preparar o modelo {model}: {exc}")  # noqa: T201
+                return 1
 
         if not _prompt_yes_no("Iniciar tradução?", default=False):
             return 0
