@@ -601,15 +601,33 @@ def _translate_with_placeholders(
     model_name: str,
     device: str,
     batch_size: int,
+    engine: str = "marian",
 ) -> tuple[str, dict[str, int], float]:
-    """Translate a single string using the local Marian adapter with placeholder protection."""
+    """Translate a single string using the selected engine with placeholder protection."""
     if batch_size <= 0:
         msg = "Batch size must be greater than zero."
         raise ValueError(msg)
 
+    normalized_engine = (engine or "marian").strip().lower()
+    if normalized_engine not in {"marian", "pytorch"}:
+        msg = f"Unsupported engine '{engine}'. Supported values: marian, pytorch."
+        raise ValueError(msg)
+
+    if normalized_engine == "marian":
+        _verify_offline_capability(model_name)
+
+    if normalized_engine == "marian":
+        adapter = _get_marian_adapter(model_name=model_name, device=device)
+    else:
+        adapter = _get_engine(
+            normalized_engine,
+            model_name=model_name,
+            device=device,
+            batch_size=batch_size,
+        )
+
     if not preserve_placeholders:
         started = time.perf_counter()
-        adapter = _get_marian_adapter(model_name=model_name, device=device)
         translated = adapter.translate(
             text,
             _locale_to_engine_code(source_locale),
@@ -617,13 +635,15 @@ def _translate_with_placeholders(
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "marian inference completed with no placeholder preservation",
+            "%s inference completed with no placeholder preservation",
+            normalized_engine,
             extra={
                 "source_locale": source_locale,
                 "target_locale": target_locale,
                 "device": device,
                 "time_ms": round(elapsed_ms, 2),
                 "model": model_name,
+                "engine": normalized_engine,
             },
         )
         return translated, {"preserved": 0, "substituted": 0, "missing": 0}, elapsed_ms
@@ -632,7 +652,6 @@ def _translate_with_placeholders(
     masked_text, placeholders_map = protector.mask(text)
     original_count = len(placeholders_map)
     started = time.perf_counter()
-    adapter = _get_marian_adapter(model_name=model_name, device=device)
     translated_masked = adapter.translate(
         masked_text,
         _locale_to_engine_code(source_locale),
@@ -648,7 +667,8 @@ def _translate_with_placeholders(
             extra={"issues": restore_issues, "preserved": original_count},
         )
     logger.info(
-        "marian inference completed with placeholder restoration",
+        "%s inference completed with placeholder restoration",
+        normalized_engine,
         extra={
             "source_locale": source_locale,
             "target_locale": target_locale,
@@ -657,6 +677,7 @@ def _translate_with_placeholders(
             "model": model_name,
             "placeholders": original_count,
             "preserved": original_count,
+            "engine": normalized_engine,
         },
     )
     placeholder_stats = {
@@ -666,9 +687,9 @@ def _translate_with_placeholders(
     }
     if elapsed_ms > 5000:
         logger.warning(
-            "Long Marian inference detected; consider reducing input length or "
-            "using a faster device",
-            extra={"time_ms": round(elapsed_ms, 2), "device": device},
+            "Long %s inference detected; consider reducing input length or using a faster device",
+            normalized_engine,
+            extra={"time_ms": round(elapsed_ms, 2), "device": device, "engine": normalized_engine},
         )
     return restored, placeholder_stats, elapsed_ms
 
@@ -929,6 +950,7 @@ def translate_with_placeholders(
     model_name: str,
     device: str,
     batch_size: int,
+    engine: str = "marian",
 ) -> tuple[str, dict[str, int], float]:
     """Public wrapper for single-string placeholder-aware translation."""
     return _translate_with_placeholders(
@@ -939,6 +961,7 @@ def translate_with_placeholders(
         model_name=model_name,
         device=device,
         batch_size=batch_size,
+        engine=engine,
     )
 
 

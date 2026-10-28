@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from poliglota import cli
+from poliglota.core.locale import Locale
 from poliglota.formats.operations import discover_resources
 from poliglota.formats.registry_init import get_registry
 
@@ -89,12 +90,16 @@ def translate_resource_files(
 
             translated_entries = {}
             actual_model = model
+            normalized_engine = (engine or "marian").strip().lower()
             if actual_model is None or not str(actual_model).strip():
-                try:
-                    actual_model = cli.select_default_motor(source_locale, target_locale)
-                except ValueError as exc:
-                    msg = str(exc)
-                    raise ValueError(msg) from exc
+                if normalized_engine == "pytorch":
+                    actual_model = "facebook/nllb-200-distilled-600M"
+                else:
+                    try:
+                        actual_model = cli.select_default_motor(source_locale, target_locale)
+                    except ValueError as exc:
+                        msg = str(exc)
+                        raise ValueError(msg) from exc
 
             for key, value in src_doc.entries.items():
                 if str(key).startswith("@"):
@@ -111,7 +116,7 @@ def translate_resource_files(
                             source_locale,
                             target_locale,
                             model_name=actual_model,
-                            options={"engine": engine, "device": device},
+                            options={"engine": normalized_engine, "device": device},
                         )
                         if cached is not None:
                             translated_text = cached[0]
@@ -124,13 +129,14 @@ def translate_resource_files(
                                 model_name=actual_model,
                                 device=device,
                                 batch_size=batch_size,
+                                engine=normalized_engine,
                             )
                             cache.set(
                                 text,
                                 source_locale,
                                 target_locale,
                                 model_name=actual_model,
-                                options={"engine": engine, "device": device},
+                                options={"engine": normalized_engine, "device": device},
                                 value=(
                                     translated_text,
                                     {"preserved": 0, "substituted": 0, "missing": 0},
@@ -146,6 +152,7 @@ def translate_resource_files(
                             model_name=actual_model,
                             device=device,
                             batch_size=batch_size,
+                            engine=normalized_engine,
                         )
                     translated_entries[key] = translated_text
                     report.translated += 1
@@ -165,7 +172,14 @@ def translate_resource_files(
             try:
                 from dataclasses import replace
 
-                new_doc = replace(src_doc, entries=translated_entries)
+                metadata = dict(src_doc.metadata)
+                metadata["@@locale"] = target_locale
+                new_doc = replace(
+                    src_doc,
+                    locale=Locale(target_locale),
+                    entries=translated_entries,
+                    metadata=metadata,
+                )
                 adapter.write(new_doc, out_path)
                 report.processed += 1
             except (OSError, TypeError, ValueError) as exc:
