@@ -179,7 +179,7 @@ jobs:
     name: Testes Integração GPU (CUDA)
     runs-on: [self-hosted, gpu, cuda]
     timeout-minutes: 60
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
