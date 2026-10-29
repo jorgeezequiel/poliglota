@@ -79,7 +79,7 @@ poliglota --help
 python -c "import poliglota; print(poliglota.__version__)"
 ```
 
-A versão atual do pacote é `0.0.1`.
+A versão atual do pacote é `0.0.2`.
 
 ## 4. Preparar modelos (opcional)
 
@@ -137,7 +137,7 @@ Ambientes criados com Python 3.12+ trazem apenas `pip`. Instale `setuptools>=77`
 
 ### Divergência de versão
 
-Se `python -c "import poliglota; print(poliglota.__version__)"` não retornar `0.0.1`, reinstale o pacote em modo editável. O teste `tests/test_version_consistency.py` detecta divergências entre `pyproject.toml`, `poliglota/__init__.py`, `VERSION` e os metadados instalados.
+Se `python -c "import poliglota; print(poliglota.__version__)"` não retornar `0.0.2`, reinstale o pacote em modo editável. O teste `tests/test_version_consistency.py` detecta divergências entre `pyproject.toml`, `poliglota/__init__.py`, `VERSION` e os metadados instalados.
 
 ## Observações
 

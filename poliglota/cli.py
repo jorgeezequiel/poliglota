@@ -298,11 +298,27 @@ def _run_prepare_model(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_gui(args: argparse.Namespace) -> int:
+    """Launch the desktop GUI from the CLI entry point."""
+    from .gui import main as gui_main
+
+    return gui_main(["--project-root", str(args.root)])
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Poliglota: validate and sync localization files.")
     subparsers = parser.add_subparsers(dest="command", required=False)
     subparsers.add_parser("interactive", help="launch interactive guided flow")
     subparsers.add_parser("guiado", help="lançar fluxo interativo guiado")
+
+    gui_parser = subparsers.add_parser("gui", help="launch the desktop GUI")
+    gui_parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="initial project root to open in the desktop UI",
+    )
+    gui_parser.set_defaults(func=_run_gui)
 
     validate_parser = subparsers.add_parser("validate", help="validate locale files")
     validate_parser.add_argument(
@@ -1171,6 +1187,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if getattr(args, "func", None) is not None:
         return args.func(args)
 
+    if getattr(args, "command", None) == "gui":
+        return _run_gui(args)
     if getattr(args, "command", None) == "validate":
         return _run_validate(
             args.root,

@@ -120,7 +120,9 @@ def test_check_model_cached_real_hf_hub_layout(
     snapshot.mkdir(parents=True, exist_ok=True)
     (snapshot / "config.json").write_text('{"model_type": "nllb"}', encoding="utf-8")
     (snapshot / "pytorch_model.bin").write_bytes(b"\0" * 128)
-    (snapshot / "tokenizer_config.json").write_text('{"tokenizer_class": "NLLBTokenizer"}', encoding="utf-8")
+    (snapshot / "tokenizer_config.json").write_text(
+        '{"tokenizer_class": "NLLBTokenizer"}', encoding="utf-8"
+    )
     monkeypatch.setenv("HF_HOME", str(cache_root))
 
     assert cli_module.gpu.check_model_cached("facebook/nllb-200-distilled-600M") is True

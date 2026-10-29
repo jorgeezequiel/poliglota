@@ -4,7 +4,7 @@
 
 Poliglota é um pacote Python para validar, sincronizar e traduzir recursos de localização em múltiplos formatos de arquivo, sem acoplar a lógica de formato à aplicação.
 
-Versão atual: **0.0.1** (pré-1.0, em desenvolvimento ativo).
+Versão atual: **0.0.2** (pré-1.0, em desenvolvimento ativo).
 
 ## O que o projeto faz
 
