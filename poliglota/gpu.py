@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -63,14 +64,34 @@ def _require_torch() -> ModuleType:
 
 
 def _is_mps_available(torch: ModuleType) -> bool:
-    """Return True when Apple MPS is present and available."""
+    """Return True when Apple MPS is present and available.
+
+    Some macOS virtualized runners emit a UserWarning when the underlying device
+    does not support Metal 2.0; treat that as an unavailable backend instead of a
+    hard failure in the runtime/device-selection layer.
+    """
     mps = getattr(torch, "mps", None)
     if mps is None:
         return False
     is_available = getattr(mps, "is_available", None)
-    if callable(is_available):
-        return bool(is_available())
-    return False
+    if not callable(is_available):
+        return False
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Skipping device.*does not support Metal 2\.0.*",
+            category=UserWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*Metal 2\.0.*",
+            category=UserWarning,
+        )
+        try:
+            return bool(is_available())
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
 
 
 def _bytes_to_gb(value_bytes: float) -> float:

@@ -20,9 +20,7 @@ from .cli import main as cli_main
 class PoliglotaGUI:
     """Thin GUI wrapper around the existing Poliglota CLI logic."""
 
-    def __init__(
-        self, *, project_root: str | Path | None = None, headless: bool = False
-    ) -> None:
+    def __init__(self, *, project_root: str | Path | None = None, headless: bool = False) -> None:
         """Create a GUI app bound to a project root and startup mode."""
         self.project_root = (
             Path(project_root).resolve() if project_root is not None else Path.cwd().resolve()

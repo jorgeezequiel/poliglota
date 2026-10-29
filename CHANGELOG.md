@@ -46,6 +46,29 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - Nenhum modelo, peso ou tokenizer é distribuído neste repositório.
 - A stack de ML permanece opcional por meio do extra `[gpu]`.
 
+## [0.0.2]
+
+### Adicionado
+
+- GUI desktop em Tkinter para uso local, exposta via comandos `poliglota gui` e `poliglota-gui`.
+- Inicialização headless da GUI para CI e testes sem sessão gráfica, sem ocultar a interface oficial da CLI.
+- Wrapper visual mínimo que delega para as mesmas ações da CLI existente, preservando o comportamento canônico do terminal.
+
+### Alterado
+
+- O fluxo principal continua sendo a CLI; a GUI é opcional e não duplica regras de negócio nem redesenha a lógica de tradução.
+- A seleção de dispositivo e a validação de cache/modelo continuam explícitas, sem download automático nem telemetria.
+
+### Corrigido
+
+- Detecção de MPS no macOS em runners virtualizados: a advertência de Metal 2.0 incompatível foi tratada como "backend indisponível", mantendo fallback seguro para CPU em vez de elevar falha no fluxo.
+- Arrumação final do wrapper GUI para startup em ambiente sem display e para `ruff format --check` em `poliglota/gui_app.py`.
+
+### Observações
+
+- Nenhuma release/tag pública foi publicada para `0.0.2`.
+- O comportamento offline, sem download e sem telemetria permanece preservado; requisitos de CUDA/modelo continuam visíveis para o usuário.
+
 ## [Não lançado]
 
 - Sem mudanças pendentes no momento.
