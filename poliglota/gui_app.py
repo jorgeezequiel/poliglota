@@ -54,6 +54,7 @@ from .gui_validators import (
     validate_project_path,
     validate_translation_text,
 )
+from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
 from .gui_view import (
     MIN_WINDOW_HEIGHT,
     MIN_WINDOW_WIDTH,
@@ -1083,50 +1084,15 @@ class PoliglotaGUI:
         return Path(raw_value)
 
     def _resolve_default_model_for_pair(self, source_value: str, target_value: str) -> str:
-        """Resolve the GUI default model for a locale pair.
-
-        The CLI exposes a strict pair map, but the GUI is a friendlier wrapper: if the
-        pair is not covered by the default CLI logic, the GUI falls back to a broader
-        compatibility map and only then raises an actionable message.
-        """
+        """Resolve the GUI default model for a locale pair using the shared catalog."""
         normalized = (source_value or "").strip()
         target = (target_value or "").strip()
         if not normalized or not target:
             msg = "Informe origem e destino antes de resolver o modelo padrão."
             raise ValueError(msg)
 
-        source_code = normalized.split("_", 1)[0].lower()
-        target_code = target.split("_", 1)[0].lower()
-        preferred_pairs = {
-            "Helsinki-NLP/opus-mt-en-es": {("en", "es"), ("es", "en")},
-            "Helsinki-NLP/opus-mt-en-fr": {("en", "fr"), ("fr", "en")},
-            "Helsinki-NLP/opus-mt-tc-big-en-pt": {("en", "pt"), ("pt", "en")},
-            "facebook/nllb-200-distilled-600M": {
-                ("en", "es"),
-                ("es", "en"),
-                ("en", "fr"),
-                ("fr", "en"),
-                ("en", "pt"),
-                ("pt", "en"),
-                ("pt", "es"),
-                ("es", "pt"),
-                ("pt", "fr"),
-                ("fr", "pt"),
-                ("pt", "de"),
-                ("pt", "ja"),
-                ("pt", "ko"),
-                ("pt", "it"),
-                ("pt", "ru"),
-                ("pt", "pl"),
-            },
-        }
-
-        for model_name, supported_pairs in preferred_pairs.items():
-            if (source_code, target_code) in supported_pairs:
-                return model_name
-
         try:
-            return cli_module.select_default_motor(normalized, target)
+            return resolve_shared_default_model(normalized, target)
         except ValueError as exc:
             msg = (
                 f"Nenhum modelo compatível com {normalized} -> {target}. "

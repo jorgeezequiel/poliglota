@@ -165,9 +165,7 @@ def run_interactive() -> int:
 
         detection = detect_source_locale(root, format_name, adapter=adapter)
         if detection.inconclusive:
-            raise ValueError(
-                "A detecção de idioma foi inconclusiva. Selecione manualmente o idioma de origem."
-            )
+            print("A detecção de idioma foi inconclusiva. O próximo passo exige confirmação manual.")
 
         locale_candidates = [
             normalize_locale_code(candidate.locale_code) or candidate.locale_code
@@ -177,6 +175,8 @@ def run_interactive() -> int:
             locales_list = sorted(set(by_locale.keys()) | set(locale_candidates))
         else:
             locales_list = sorted(by_locale.keys())
+        if not locales_list:
+            raise ValueError("Nenhum idioma foi encontrado para esta pasta.")
         src_idx = _prompt_choice("Selecione o idioma de origem:", locales_list, default=0)
         source_locale = locales_list[src_idx]
 
@@ -207,13 +207,18 @@ def run_interactive() -> int:
 
         is_cached = gpu.check_model_cached(model)
         if not is_cached:
-            raise ValueError(
-                f"Modelo {model} não encontrado ou incompleto no cache local."
-                " Nenhum download será iniciado sem consentimento explícito."
-            )
+            if not _prompt_yes_no(f"Baixar e preparar o modelo {model}?", default=False):
+                print("Preparação cancelada. Nenhum modelo foi baixado.")
+                return 0
+            try:
+                cli._prepare_model_locally(model, resolved)
+            except RuntimeError as exc:
+                print(f"Erro: {exc}")
+                return 1
 
         if not _prompt_yes_no("Iniciar tradução?", default=False):
-            raise ValueError("Tradução cancelada pelo usuário.")
+            print("Tradução cancelada pelo usuário.")
+            return 0
 
         report = translate_resource_files(
             root=root,
