@@ -6,6 +6,7 @@ They provide the core business logic that the CLI and other consumers need.
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,26 @@ def _fallback_files(root_path: Path, format_name: str) -> list[Path]:
         seen.add(path)
         unique.append(path)
     return unique
+
+
+def _resource_group_key(resource: Any) -> str:
+    """Return a stable grouping key for matching source/target files.
+
+    ARB files identify a logical bundle by ``module``. Other formats do not carry
+    an explicit module, so they should be matched by the enclosing directory name
+    or a normalized filename stem when no better identifier exists.
+    """
+    attributes = getattr(resource, "attributes", {}) or {}
+    module = attributes.get("module")
+    if module:
+        return str(module)
+
+    path = getattr(resource, "path", None)
+    if path is not None:
+        candidate = path.parent.name if path.parent.name else path.stem
+        if candidate and candidate not in {".", ""}:
+            return candidate
+    return "default"
 
 
 def discover_resources(adapter: FormatAdapter, root: str | Path) -> dict[str, list]:
@@ -126,24 +147,28 @@ def validate_with_adapter(
     root_path = Path(root)
     by_locale = discover_resources(adapter, root_path)
 
-    if source_locale not in by_locale:
-        return [f"Missing source locale '{source_locale}' in {root_path}"]
+    source_key = normalize_locale_code(source_locale) or source_locale
+    if source_key not in by_locale:
+        if source_locale in by_locale:
+            source_key = source_locale
+        else:
+            return [f"Missing source locale '{source_locale}' in {root_path}"]
 
     issues: list[str] = []
-    source_resources = by_locale[source_locale]
+    source_resources = by_locale[source_key]
 
     for locale, locale_resources in by_locale.items():
-        if locale == source_locale:
+        if locale == source_key:
             continue
 
         for source_resource in source_resources:
             source_doc = adapter.read(source_resource.path)
-            source_module = source_resource.attributes.get("module")
+            source_group = _resource_group_key(source_resource)
 
             for target_resource in locale_resources:
-                target_module = target_resource.attributes.get("module")
+                target_group = _resource_group_key(target_resource)
 
-                if source_module != target_module:
+                if source_group != target_group:
                     continue
 
                 target_doc = adapter.read(target_resource.path)
@@ -202,7 +227,8 @@ def sync_with_adapter(
     root_path = Path(root)
     by_locale = discover_resources(adapter, root_path)
 
-    source_resources = by_locale.get(source_locale, [])
+    source_key = normalize_locale_code(source_locale) or source_locale
+    source_resources = by_locale.get(source_key, [])
     if not source_resources:
         msg = f"Source locale '{source_locale}' not found in {root_path}"
         raise ValueError(msg)
@@ -211,22 +237,21 @@ def sync_with_adapter(
     all_resources = [r for resources in by_locale.values() for r in resources]
 
     for target_resource in all_resources:
-        if target_resource.locale.code == source_locale:
+        target_key = normalize_locale_code(target_resource.locale.code) or target_resource.locale.code
+        if target_key == source_key:
             continue
 
-        target_module = target_resource.attributes.get("module")
+        target_group = _resource_group_key(target_resource)
 
         for source_resource in source_resources:
-            source_module = source_resource.attributes.get("module")
+            source_group = _resource_group_key(source_resource)
 
-            if source_module != target_module:
+            if source_group != target_group:
                 continue
 
-            # Read both documents
             source_doc = adapter.read(source_resource.path)
             target_doc = adapter.read(target_resource.path)
 
-            # Find missing keys in target
             missing = {
                 key: value
                 for key, value in source_doc.entries.items()
@@ -237,16 +262,13 @@ def sync_with_adapter(
                 continue
 
             if not dry_run:
-                # Update target entries with missing keys
                 updated_entries = dict(target_doc.entries)
                 updated_entries.update(missing)
-
-                # Write back with preserved metadata
-                from dataclasses import replace
 
                 updated_doc = replace(target_doc, entries=updated_entries)
                 adapter.write(updated_doc, target_resource.path)
 
             changed += 1
+            break
 
     return changed
