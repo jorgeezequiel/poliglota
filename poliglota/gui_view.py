@@ -434,6 +434,17 @@ class GuiView:
             justify=tk.LEFT,
         ).pack(anchor="w", pady=(0, 6))
 
+        ttk.Label(
+            main_frame,
+            text=(
+                "Dica rápida: Ctrl+O para escolher a pasta, Ctrl+L para focar o projeto, "
+                "F5 para validar e Esc para cancelar."
+            ),
+            style="Hint.TLabel",
+            wraplength=900,
+            justify=tk.LEFT,
+        ).pack(anchor="w", pady=(0, 8))
+
         self._build_form(main_frame, variables)
 
         self.validation_label = ttk.Label(main_frame, textvariable=variables.validation)
@@ -472,6 +483,8 @@ class GuiView:
 
         with contextlib.suppress(AttributeError, TypeError, tk.TclError):
             self.output_text.configure(state=tk.DISABLED)
+
+        self._focus_first_field()
 
     def _build_preset_row(
         self,
@@ -780,6 +793,7 @@ class GuiView:
             text="Cancelar",
             command=actions.cancel,
             state=tk.DISABLED,
+            style="Warning.TButton",
         )
         self.cancel_button.pack(side=tk.RIGHT)
         self._add_tooltip(self.cancel_button, "Interrompe a operação em andamento (Esc).")
@@ -843,6 +857,7 @@ class GuiView:
             style.configure("TFrame", background=theme.background)
             style.configure("TLabel", background=theme.background, foreground=theme.foreground)
             style.configure("Muted.TLabel", background=theme.background, foreground=theme.muted)
+            style.configure("Hint.TLabel", background=theme.background, foreground=theme.accent)
             style.configure("Ok.TLabel", background=theme.background, foreground=theme.success)
             style.configure("Error.TLabel", background=theme.background, foreground=theme.error)
             style.configure("TButton", padding=(10, 4))
@@ -855,6 +870,17 @@ class GuiView:
             style.map(
                 "Accent.TButton",
                 background=[("active", theme.accent)],
+                foreground=[("active", theme.accent_text)],
+            )
+            style.configure(
+                "Warning.TButton",
+                background=theme.error,
+                foreground=theme.accent_text,
+                bordercolor=theme.error,
+            )
+            style.map(
+                "Warning.TButton",
+                background=[("active", theme.error)],
                 foreground=[("active", theme.accent_text)],
             )
             style.configure(
@@ -1046,6 +1072,7 @@ class GuiView:
         if self.cancel_button is not None:
             with contextlib.suppress(AttributeError, TypeError, tk.TclError):
                 self.cancel_button.configure(state=tk.NORMAL if busy else tk.DISABLED)
+                self.cancel_button.configure(style="Warning.TButton" if busy else "TButton")
 
     @contextlib.contextmanager
     def _writable_output(self) -> Iterator[object]:
@@ -1167,13 +1194,14 @@ class GuiView:
         return normalized
 
     def bind_shortcuts(self) -> None:
-        """Bind Enter, Ctrl+O, F5 and Escape to their actions."""
+        """Bind keyboard flows so the window is accessible without the mouse."""
         actions = self._actions
         if actions is None or self.root is None:
             return
 
         bindings = {
             "<Control-o>": actions.choose_project,
+            "<Control-l>": self._focus_project_field,
             "<F5>": actions.validate,
             "<Escape>": actions.cancel,
         }
@@ -1192,6 +1220,16 @@ class GuiView:
                 continue
             with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
                 bind("<Return>", self._event_handler(actions.validate))
+
+    def _focus_first_field(self) -> None:
+        """Give keyboard focus to the project field on first render."""
+        if self.root is None:
+            return
+        self.focus_field("project")
+
+    def _focus_project_field(self) -> None:
+        """Return keyboard focus to the project field for quick navigation."""
+        self.focus_field("project")
 
     @staticmethod
     def _event_handler(callback: Callable[[], None]) -> Callable[[tk.Event], str]:

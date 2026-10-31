@@ -125,6 +125,161 @@ def enable_high_dpi() -> bool:
     return _apply_windows_dpi_awareness()
 
 
+class _CommandRunner:
+    """Own the subprocess lifecycle, including timeout and job-object teardown."""
+
+    def __init__(self, app: PoliglotaGUI) -> None:
+        self.app = app
+
+    def run(
+        self,
+        *argv: str,
+        on_line: Callable[[str], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
+        """Execute the CLI, streaming stdout/stderr separately with timeout handling."""
+        command = [sys.executable, "-m", "poliglota", *argv]
+        try:
+            process = subprocess.Popen(  # noqa: S603
+                command,
+                cwd=str(self.app.project_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+        except OSError as exc:
+            return 1, f"Erro ao executar o comando: {exc}"
+
+        job = WindowsJob()
+        job.attach(process)
+        self.app.job = job
+        self.app.process = process
+        if self.app.cancel_requested:
+            self.app.terminate_process()
+        timed_out = threading.Event()
+        timer = threading.Timer(
+            COMMAND_TIMEOUT_SECONDS,
+            self.app.handle_timeout,
+            args=(process, timed_out),
+        )
+        timer.daemon = True
+        timer.start()
+
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        error_sink = on_error if on_error is not None else on_line
+
+        def read_stderr() -> None:
+            stream = process.stderr
+            if stream is None:
+                return
+            try:
+                for raw_line in stream:
+                    line = raw_line.rstrip("\r\n")
+                    if not line:
+                        continue
+                    stderr_lines.append(line)
+                    if error_sink is not None:
+                        error_sink(line)
+            except (OSError, ValueError):
+                return
+
+        error_reader = threading.Thread(target=read_stderr, daemon=True)
+        error_reader.start()
+
+        stream = process.stdout
+        try:
+            if stream is not None:
+                for raw_line in stream:
+                    line = raw_line.rstrip("\r\n")
+                    if not line:
+                        continue
+                    stdout_lines.append(line)
+                    if on_line is not None:
+                        on_line(line)
+                    if self.app.cancel_requested and process.poll() is None:
+                        self.app.terminate_process()
+            returncode = process.wait()
+            error_reader.join(timeout=5)
+        finally:
+            timer.cancel()
+            if stream is not None:
+                with contextlib.suppress(OSError):
+                    stream.close()
+            with contextlib.suppress(OSError):
+                error_stream = process.stderr
+                if error_stream is not None:
+                    error_stream.close()
+            self.app.process = None
+            self.app.job = None
+            job.close()
+
+        if timed_out.is_set():
+            return 1, "Tempo limite excedido ao executar o comando."
+
+        output = "\n".join([*stdout_lines, *stderr_lines]).strip()
+        if not output:
+            output = f"Comando concluído com código de saída {returncode}."
+        return returncode, output
+
+
+class _CommandTask:
+    """Encapsulate the background execution of one CLI action.
+
+    The GUI still runs work on a worker thread, but the task object becomes the
+    single place that owns command lifecycle, streaming, and completion handling.
+    This keeps the UI controller simpler and removes ad hoc branching from the
+    dispatch point.
+    """
+
+    def __init__(
+        self,
+        app: PoliglotaGUI,
+        *,
+        command: list[str],
+        busy_message: str,
+        success_message: str,
+    ) -> None:
+        self.app = app
+        self.command = command
+        self.busy_message = busy_message
+        self.success_message = success_message
+
+    def run(self) -> None:
+        """Execute the CLI command and publish UI events back to the main thread."""
+        try:
+            exit_code, output = self.app.run_cli_command(
+                *self.command,
+                on_line=self.app.stream_line,
+                on_error=self.app.stream_error,
+            )
+        except OSError as exc:
+            output = f"Erro ao executar comando: {exc}"
+            exit_code = 1
+
+        if self.app.cancel_requested:
+            logger.info("CLI command cancelled by the user")
+            self.app.publish_message("cancelled", None)
+            self.app.publish_message("status", "Operação cancelada.")
+            self.app.publish_message("complete", "Operação cancelada.")
+        elif exit_code == 0:
+            if not self.app.streamed_output:
+                self.app.publish_message("result", output)
+            self.app.publish_message("status", self.success_message)
+            self.app.publish_message("complete", self.success_message)
+        else:
+            category = categorize_error(output)
+            failure = f"Erro: {category.title}"
+            logger.warning("CLI command failed (%s): %s", exit_code, category.code)
+            self.app.publish_message("error", (output, exit_code))
+            self.app.publish_message("status", failure)
+            self.app.publish_message("complete", failure)
+        self.app.request_ui_poll()
+
+
 class PoliglotaGUI:
     """Thin GUI wrapper around the existing Poliglota CLI logic."""
 
@@ -213,6 +368,71 @@ class PoliglotaGUI:
     def validation_label(self, value: ttk.Label | None) -> None:
         """Replace the inline validation label widget."""
         self.view.validation_label = value
+
+    @property
+    def cancel_requested(self) -> bool:
+        """Return whether the user requested cancellation for the active command."""
+        return self._cancel_requested
+
+    @property
+    def streamed_output(self) -> bool:
+        """Return whether any live output was emitted by the running CLI task."""
+        return self._streamed_output
+
+    @property
+    def job(self) -> WindowsJob | None:
+        """Current Windows job handle used to terminate the CLI process tree."""
+        return self._job
+
+    @job.setter
+    def job(self, value: WindowsJob | None) -> None:
+        self._job = value
+
+    @property
+    def process(self) -> subprocess.Popen[str] | None:
+        """Process currently running the CLI command."""
+        return self._process
+
+    @process.setter
+    def process(self, value: subprocess.Popen[str] | None) -> None:
+        self._process = value
+
+    def publish_message(self, message_type: str, payload: object) -> None:
+        """Queue a message for the UI poll loop.
+
+        This keeps the worker-thread side of command execution decoupled from the
+        specific implementation details of the Tk event queue.
+        """
+        self._message_queue.put((message_type, payload))
+
+    def request_ui_poll(self) -> None:
+        """Schedule one pass through the Tk message pump when the UI is alive."""
+        self._schedule_ui_poll()
+
+    def run_cli_command(
+        self,
+        *argv: str,
+        on_line: Callable[[str], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
+        """Run the CLI command and return its exit code plus aggregated output."""
+        return self._run_cli_command(*argv, on_line=on_line, on_error=on_error)
+
+    def stream_line(self, line: str, *, is_error: bool = False) -> None:
+        """Proxy for the worker-thread streaming callback."""
+        self._stream_line(line, is_error=is_error)
+
+    def stream_error(self, line: str) -> None:
+        """Proxy for stderr delivery from the worker-thread."""
+        self._stream_error(line)
+
+    def terminate_process(self) -> None:
+        """Terminate the active CLI process tree via the Windows job object."""
+        self._terminate_process()
+
+    def handle_timeout(self, process: subprocess.Popen[str], timed_out: threading.Event) -> None:
+        """Terminate the command after the timeout window expires."""
+        self._handle_timeout(process, timed_out)
 
     def _is_window_alive(self) -> bool:
         if self.root is None:
@@ -920,92 +1140,8 @@ class PoliglotaGUI:
         is omitted the stderr lines fall back to ``on_line``, keeping older
         callers working.
         """
-        command = [sys.executable, "-m", "poliglota", *argv]
-        try:
-            process = subprocess.Popen(  # noqa: S603
-                command,
-                cwd=str(self.project_root),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-            )
-        except OSError as exc:
-            return 1, f"Erro ao executar o comando: {exc}"
-
-        job = WindowsJob()
-        job.attach(process)
-        self._job = job
-        self._process = process
-        if self._cancel_requested:
-            self._terminate_process()
-        timed_out = threading.Event()
-        timer = threading.Timer(
-            COMMAND_TIMEOUT_SECONDS,
-            self._handle_timeout,
-            args=(process, timed_out),
-        )
-        timer.daemon = True
-        timer.start()
-
-        stdout_lines: list[str] = []
-        stderr_lines: list[str] = []
-        error_sink = on_error if on_error is not None else on_line
-
-        def read_stderr() -> None:
-            stream = process.stderr
-            if stream is None:
-                return
-            try:
-                for raw_line in stream:
-                    line = raw_line.rstrip("\r\n")
-                    if not line:
-                        continue
-                    stderr_lines.append(line)
-                    if error_sink is not None:
-                        error_sink(line)
-            except (OSError, ValueError):
-                return
-
-        error_reader = threading.Thread(target=read_stderr, daemon=True)
-        error_reader.start()
-
-        stream = process.stdout
-        try:
-            if stream is not None:
-                for raw_line in stream:
-                    line = raw_line.rstrip("\r\n")
-                    if not line:
-                        continue
-                    stdout_lines.append(line)
-                    if on_line is not None:
-                        on_line(line)
-                    if self._cancel_requested and process.poll() is None:
-                        self._terminate_process()
-            returncode = process.wait()
-            error_reader.join(timeout=5)
-        finally:
-            timer.cancel()
-            if stream is not None:
-                with contextlib.suppress(OSError):
-                    stream.close()
-            with contextlib.suppress(OSError):
-                error_stream = process.stderr
-                if error_stream is not None:
-                    error_stream.close()
-            self._process = None
-            self._job = None
-            job.close()
-
-        if timed_out.is_set():
-            return 1, "Tempo limite excedido ao executar o comando."
-
-        output = "\n".join([*stdout_lines, *stderr_lines]).strip()
-        if not output:
-            output = f"Comando concluído com código de saída {returncode}."
-        return returncode, output
+        runner = _CommandRunner(self)
+        return runner.run(*argv, on_line=on_line, on_error=on_error)
 
     def _dispatch_command(
         self,
@@ -1022,37 +1158,13 @@ class PoliglotaGUI:
         self._clear_output()
         self._schedule_ui_poll()
 
-        def worker() -> None:
-            try:
-                exit_code, output = self._run_cli_command(
-                    *command,
-                    on_line=self._stream_line,
-                    on_error=self._stream_error,
-                )
-            except OSError as exc:
-                output = f"Erro ao executar comando: {exc}"
-                exit_code = 1
-
-            if self._cancel_requested:
-                logger.info("CLI command cancelled by the user")
-                self._message_queue.put(("cancelled", None))
-                self._message_queue.put(("status", "Operação cancelada."))
-                self._message_queue.put(("complete", "Operação cancelada."))
-            elif exit_code == 0:
-                if not self._streamed_output:
-                    self._message_queue.put(("result", output))
-                self._message_queue.put(("status", success_message))
-                self._message_queue.put(("complete", success_message))
-            else:
-                category = categorize_error(output)
-                failure = f"Erro: {category.title}"
-                logger.warning("CLI command failed (%s): %s", exit_code, category.code)
-                self._message_queue.put(("error", (output, exit_code)))
-                self._message_queue.put(("status", failure))
-                self._message_queue.put(("complete", failure))
-            self._schedule_ui_poll()
-
-        self._worker_thread = threading.Thread(target=worker, daemon=True)
+        task = _CommandTask(
+            self,
+            command=command,
+            busy_message=busy_message,
+            success_message=success_message,
+        )
+        self._worker_thread = threading.Thread(target=task.run, daemon=True)
         self._worker_thread.start()
 
     def _handle_validate(self) -> None:

@@ -306,6 +306,7 @@ def test_view_toggles_progress_and_cancel_button() -> None:
     assert progress.options["mode"] == "determinate"
     assert progress.options["value"] == 0
     assert button.state == "disabled"
+    assert button.state == "disabled"
 
 
 @pytest.mark.unit
@@ -320,10 +321,11 @@ def test_view_shortcuts_dispatch_actions() -> None:
 
     view.bind_shortcuts()
 
-    assert set(root.bindings) == {"<Control-o>", "<F5>", "<Escape>"}
+    assert set(root.bindings) == {"<Control-o>", "<Control-l>", "<F5>", "<Escape>"}
     assert "<Return>" in entry.bindings
 
     assert root.bindings["<Control-o>"](object()) == "break"
+    assert root.bindings["<Control-l>"](object()) == "break"
     assert root.bindings["<F5>"](object()) == "break"
     assert root.bindings["<Escape>"](object()) == "break"
     assert entry.bindings["<Return>"](object()) == "break"
