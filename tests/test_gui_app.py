@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from poliglota import __version__
 from poliglota.gui import main as gui_main
-from poliglota.gui_app import PoliglotaGUI, build_gui_app
+from poliglota.gui_app import PoliglotaGUI, build_gui_app, enable_high_dpi
 from poliglota.gui_config import DEFAULT_THEME, GuiState, load_state
 
 
@@ -675,3 +676,285 @@ def test_gui_run_cli_command_streams_help_output() -> None:
     assert exit_code == 0
     assert lines
     assert "usage" in output.lower()
+
+
+class GettableText(RecordingText):
+    def get(self, *_args: object) -> str:
+        return self.text
+
+
+class EditableText:
+    def __init__(self) -> None:
+        self.text = ""
+        self.state = "normal"
+
+    def configure(self, **kwargs: object) -> None:
+        if "state" in kwargs:
+            self.state = str(kwargs["state"])
+
+    def cget(self, _option: str) -> str:
+        return self.state
+
+    def get(self, *_args: object) -> str:
+        return self.text
+
+    def delete(self, *_args: object) -> None:
+        self.text = ""
+
+    def insert(self, _index: object, value: str) -> None:
+        self.text += value
+
+
+class ClipboardRoot(DummyRoot):
+    def __init__(self) -> None:
+        super().__init__()
+        self.clipboard = ""
+
+    def clipboard_clear(self) -> None:
+        self.clipboard = ""
+
+    def clipboard_append(self, value: str) -> None:
+        self.clipboard += value
+
+
+@pytest.mark.unit
+def test_gui_elapsed_tick_updates_the_status_line(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+
+    assert app._begin_operation("Validando recursos...") is True
+    elapsed_callback = app.root.calls[0][0]  # type: ignore[union-attr]
+    elapsed_callback()
+
+    message = str(app.status_var.get())
+    assert message.startswith("Validando recursos... (")
+    assert message.endswith("s)")
+
+    app._complete_operation(status_message="Concluído.")
+    elapsed_callback()
+
+    assert app.status_var.get() == "Concluído."
+
+
+@pytest.mark.unit
+def test_gui_copy_output_uses_the_clipboard(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.root = ClipboardRoot()
+    app.output_text = GettableText()
+    app.output_text.text = "resultado da validação"
+
+    app._copy_output()
+
+    assert app.root.clipboard == "resultado da validação"
+    assert "copiada" in str(app.status_var.get())
+
+
+@pytest.mark.unit
+def test_gui_copy_output_reports_an_empty_pane(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.root = ClipboardRoot()
+    app.output_text = GettableText()
+
+    app._copy_output()
+
+    assert app.root.clipboard == ""
+    assert "Não há saída" in str(app.status_var.get())
+
+
+@pytest.mark.unit
+def test_gui_save_output_writes_the_selected_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_valid_app(tmp_path)
+    app.output_text = GettableText()
+    app.output_text.text = "conteúdo da saída"
+    target = tmp_path / "saida.txt"
+    monkeypatch.setattr(
+        "poliglota.gui_app.filedialog.asksaveasfilename",
+        lambda **_: str(target),
+    )
+
+    app._save_output()
+
+    assert target.read_text(encoding="utf-8") == "conteúdo da saída\n"
+    assert "Saída salva" in str(app.status_var.get())
+
+
+@pytest.mark.unit
+def test_gui_save_output_ignores_a_cancelled_dialog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_valid_app(tmp_path)
+    app.output_text = GettableText()
+    app.output_text.text = "conteúdo"
+    monkeypatch.setattr("poliglota.gui_app.filedialog.asksaveasfilename", lambda **_: "")
+
+    app._save_output()
+
+    assert app.status_var.get() == "Salvamento cancelado."
+
+
+@pytest.mark.unit
+def test_gui_clear_output_button_empties_the_pane(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.output_text = RecordingText()
+    app.output_text.text = "texto antigo"
+
+    app._handle_clear_output()
+
+    assert app.output_text.text == ""
+    assert app.status_var.get() == "Saída limpa."
+
+
+@pytest.mark.unit
+def test_gui_close_window_can_be_cancelled_while_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_valid_app(tmp_path)
+    app._is_running = True
+    monkeypatch.setattr("poliglota.gui_app.messagebox.askyesno", lambda *_, **__: False)
+
+    app._close_window()
+
+    assert app.root.closed is False  # type: ignore[union-attr]
+    assert app._window_closed is False
+
+
+@pytest.mark.unit
+def test_gui_close_window_proceeds_when_confirmed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _build_valid_app(tmp_path)
+    app._is_running = True
+    monkeypatch.setattr("poliglota.gui_app.messagebox.askyesno", lambda *_, **__: True)
+
+    app._close_window()
+
+    assert app.root.closed is True  # type: ignore[union-attr]
+    assert app._window_closed is True
+
+
+@pytest.mark.unit
+def test_gui_restore_defaults_keeps_the_current_theme(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.format_var = DummyVar("json")
+    app.source_var = DummyVar("es")
+    app.target_var = DummyVar("fr")
+    app.engine_var = DummyVar("pytorch")
+    app.device_var = DummyVar("cuda")
+    app.model_var = DummyVar("modelo")
+    app.sync_dry_run_var = DummyVar(value=False)
+    app.translation_var = DummyVar("texto")
+    app.theme_var = DummyVar("dark")
+
+    app._restore_defaults()
+
+    assert app.project_var.get() == str(tmp_path)
+    assert app.format_var.get() == "arb"
+    assert app.source_var.get() == "pt_BR"
+    assert app.target_var.get() == "en_US"
+    assert app.engine_var.get() == "marian"
+    assert app.device_var.get() == "auto"
+    assert app.model_var.get() == ""
+    assert app.sync_dry_run_var.get() is True
+    assert app.translation_var.get() == ""
+    assert app.theme_var.get() == "dark"
+    assert app.status_var.get() == "Padrões restaurados."
+
+
+@pytest.mark.unit
+def test_gui_refresh_validation_includes_a_filled_text_field(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.translation_var = DummyVar("Olá, mundo!")
+
+    app._refresh_validation()
+
+    assert app._validation_results["translation"].is_valid is True
+    assert app.validation_var.get() == "✓ Configuração válida."
+
+
+@pytest.mark.unit
+def test_gui_refresh_validation_skips_an_empty_text_field(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app.translation_var = DummyVar("   ")
+
+    app._refresh_validation()
+
+    assert "translation" not in app._validation_results
+
+
+@pytest.mark.unit
+def test_gui_translation_variable_updates_the_multiline_widget(tmp_path: Path) -> None:
+    app = _build_valid_app(tmp_path)
+    app._ui_built = True
+    app.translation_var = DummyVar("Olá\nmundo")
+    widget = EditableText()
+    app.view.translation_text = widget  # type: ignore[assignment]
+
+    app._on_translation_text_changed()
+
+    assert widget.text == "Olá\nmundo"
+    assert app._validation_results["translation"].is_valid is True
+
+
+@pytest.mark.unit
+def test_enable_high_dpi_is_a_no_op_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("poliglota.gui_app.sys.platform", "linux")
+
+    assert enable_high_dpi() is False
+
+
+@pytest.mark.unit
+def test_enable_high_dpi_uses_the_shcore_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeShcore:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def SetProcessDpiAwareness(self, value: int) -> None:  # noqa: N802
+            self.calls.append(value)
+
+    shcore = FakeShcore()
+    monkeypatch.setattr("poliglota.gui_app.sys.platform", "win32")
+    monkeypatch.setattr(
+        "poliglota.gui_app.ctypes",
+        SimpleNamespace(windll=SimpleNamespace(shcore=shcore)),
+    )
+
+    assert enable_high_dpi() is True
+    assert shcore.calls == [1]
+
+
+@pytest.mark.unit
+def test_enable_high_dpi_falls_back_to_user32(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BrokenShcore:
+        def SetProcessDpiAwareness(self, _value: int) -> None:  # noqa: N802
+            msg = "already aware"
+            raise OSError(msg)
+
+    class FakeUser32:
+        def __init__(self) -> None:
+            self.called = False
+
+        def SetProcessDPIAware(self) -> None:  # noqa: N802
+            self.called = True
+
+    user32 = FakeUser32()
+    monkeypatch.setattr("poliglota.gui_app.sys.platform", "win32")
+    monkeypatch.setattr(
+        "poliglota.gui_app.ctypes",
+        SimpleNamespace(windll=SimpleNamespace(shcore=BrokenShcore(), user32=user32)),
+    )
+
+    assert enable_high_dpi() is True
+    assert user32.called is True
+
+
+@pytest.mark.unit
+def test_enable_high_dpi_tolerates_a_missing_windll(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("poliglota.gui_app.sys.platform", "win32")
+    monkeypatch.setattr("poliglota.gui_app.ctypes", SimpleNamespace())
+
+    assert enable_high_dpi() is False

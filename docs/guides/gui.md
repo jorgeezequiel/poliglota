@@ -48,6 +48,34 @@ python -m poliglota.gui --state-file C:\temp\meu-estado.json
 5. Clicar em `Validar`, `Sincronizar`, `Listar idiomas` ou `Traduzir`.
 6. Acompanhar a saída do comando em tempo real na área de resultados.
 
+## Texto multilinha
+
+O campo `Texto` aceita várias linhas (três linhas visíveis, com rolagem interna). O conteúdo é sincronizado com o restante do formulário e enviado como um único argumento para o comando `translate`, preservando quebras de linha. O campo é habilitado apenas quando ocioso; durante uma operação ele fica desabilitado junto com o resto do formulário.
+
+## Saída, cópia e salvamento
+
+A área de resultados é somente leitura: o usuário pode selecionar e copiar o texto, mas não editá-lo por engano. Abaixo dela há três ações:
+
+| Botão | Ação |
+| --- | --- |
+| `Copiar` | envia todo o conteúdo da saída para a área de transferência |
+| `Salvar` | grava a saída em um arquivo `.txt` escolhido pelo usuário, em UTF-8 |
+| `Limpar` | esvazia a área de resultados |
+
+Essas ações continuam disponíveis durante a execução de um comando, para permitir copiar a saída parcial enquanto o processo ainda está rodando.
+
+## Tooltips
+
+Campos, comboboxes, botões e o seletor de tema exibem uma dica curta ao passar o mouse (por exemplo, “Idioma de origem, por exemplo pt_BR.”). As dicas são implementadas com Tkinter puro, sem dependências externas.
+
+## Restaurar padrões
+
+O botão `Restaurar padrões` devolve pasta do projeto, formato, locales, motor, dispositivo, modelo, `dry-run` e texto aos valores iniciais. O tema escolhido é preservado, e a alteração é gravada no arquivo de estado.
+
+## Fechamento durante uma operação
+
+Se a janela for fechada enquanto um comando está em andamento, a GUI pede confirmação. Recusar mantém a janela aberta e a operação continua; confirmar encerra o processo, grava o estado pendente e fecha a janela.
+
 ## Atalhos de teclado
 
 | Atalho | Ação |
@@ -60,6 +88,7 @@ python -m poliglota.gui --state-file C:\temp\meu-estado.json
 ## Progresso, streaming e cancelamento
 
 - A barra de progresso fica visível o tempo todo e entra em modo indeterminado enquanto um comando roda, porque a CLI não informa percentual.
+- O tempo decorrido aparece na linha de status, por exemplo `Validando recursos... (3.2s)`, atualizado a cada 200 ms.
 - A saída do processo é lida linha a linha e aparece na área de resultados conforme é produzida, em vez de esperar o comando terminar.
 - `stdout` e `stderr` são mesclados e decodificados como UTF-8 (a CLI força UTF-8 na inicialização), com substituição de caracteres inválidos para nunca quebrar a janela.
 - Durante uma operação, o formulário e os botões de ação ficam desabilitados; os comboboxes voltam ao estado `readonly` ao final.
@@ -68,7 +97,11 @@ python -m poliglota.gui --state-file C:\temp\meu-estado.json
 
 ## Tema claro/escuro
 
-O seletor `Tema` no topo da janela alterna entre `light` e `dark`. O tema é aplicado imediatamente a todos os widgets (formulário, botões, barra de progresso e área de resultados) e fica salvo no arquivo de estado. Valores desconhecidos no arquivo caem no tema padrão (`light`).
+O seletor `Tema` no topo da janela alterna entre `light` e `dark`. O tema é aplicado imediatamente a todos os widgets (formulário, botões, barra de progresso, campo de texto multilinha e área de resultados) e fica salvo no arquivo de estado. Valores desconhecidos no arquivo caem no tema padrão (`light`).
+
+## Alta densidade de pixels (Windows)
+
+No Windows, a GUI ativa o reconhecimento de DPI antes de criar a janela (`SetProcessDpiAwareness`, com fallback para `SetProcessDPIAware`) e ajusta o fator de escala do Tk ao DPI do monitor. Em monitores a 125%, 150% ou 200%, fontes e espaçamentos permanecem proporcionais em vez de minúsculos. Em outros sistemas, o ajuste é simplesmente ignorado.
 
 ## Geometria da janela
 
@@ -111,7 +144,7 @@ O que é verificado localmente, antes de qualquer comando ser executado:
 | Projeto | pasta informada existe e é um diretório acessível |
 | Idioma de origem/destino | código não vazio, formato de locale válido (`pt`, `pt_BR`, `en-US`, `zh_Hant_TW`) e tamanho razoável |
 | Modelo | opcional; quando preenchido, aceita apenas letras, números, `.`, `_`, `-` e `/` |
-| Texto para tradução | obrigatório apenas no botão `Traduzir` |
+| Texto para tradução | campo multilinha; validado em tempo real quando preenchido e obrigatório apenas no botão `Traduzir` |
 
 Quando a validação falha, o comando não é disparado, o foco vai para o primeiro campo inválido e a barra de status resume a pendência.
 

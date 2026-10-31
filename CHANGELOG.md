@@ -86,10 +86,19 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 - **Tema claro/escuro** na GUI, aplicado em tempo real e lembrado entre sessões.
 - **Geometria da janela lembrada** entre sessões, com normalização de tamanho e posição para nunca reabrir fora da tela.
 - Testes da camada de apresentação em `tests/test_gui_view.py` (temas, geometria, destaque de campos, progresso e atalhos) e novos casos de streaming/cancelamento em `tests/test_gui_app.py`.
+- **Tooltips na GUI**: campos, comboboxes, botões e o seletor de tema exibem dicas curtas ao passar o mouse, sem dependência externa.
+- **Tempo decorrido na GUI**: a linha de status mostra `Validando recursos... (3.2s)` durante a operação, atualizada a cada 200 ms.
+- **Área de saída somente leitura** com ações `Copiar`, `Salvar` (arquivo `.txt` em UTF-8) e `Limpar`, disponíveis inclusive durante a execução de um comando.
+- **Confirmação ao fechar durante uma operação**: a janela pede confirmação antes de encerrar o processo em andamento.
+- **Campo `Texto` multilinha** na GUI, sincronizado com o formulário e validado em tempo real quando preenchido.
+- **Botão `Restaurar padrões`** na GUI, que devolve os campos aos valores iniciais preservando o tema atual.
+- **Alta densidade de pixels no Windows**: reconhecimento de DPI (`SetProcessDpiAwareness`/`SetProcessDPIAware`) e ajuste do fator de escala do Tk ao DPI do monitor.
+- Novos testes de tooltips, tempo decorrido, cópia/salvamento/limpeza da saída, confirmação de fechamento, restauração de padrões, alta densidade de pixels e texto multilinha.
 
 ### Alterado
 
 - A GUI foi separada em apresentação (`poliglota/gui_view.py`) e comportamento (`poliglota/gui_app.py`), mantendo a CLI como fonte de verdade.
+- A área de resultados passou a ser somente leitura; toda escrita é feita pela própria GUI, que desbloqueia o widget apenas durante a atualização.
 - Ao reabilitar o formulário após um comando, os comboboxes voltam ao estado `readonly` em vez de ficarem editáveis.
 - Comandos da GUI passaram a ter leitura incremental com limite de 300 segundos, encerrando processos travados com mensagem de tempo limite.
 

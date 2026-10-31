@@ -33,7 +33,7 @@ from .gui_config import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Container
+    from collections.abc import Callable, Container, Iterator
 
 DEFAULT_GEOMETRY = "960x640"
 MIN_WINDOW_WIDTH = 760
@@ -41,6 +41,11 @@ MIN_WINDOW_HEIGHT = 500
 DEFAULT_WINDOW_OFFSET = 40
 MIN_VISIBLE_MARGIN = 120
 PROGRESS_INTERVAL_MS = 12
+TOOLTIP_DELAY_MS = 500
+TOOLTIP_BACKGROUND = "#ffffe0"
+TOOLTIP_FOREGROUND = "#1b1f24"
+TOOLTIP_OFFSET_X = 12
+TOOLTIP_OFFSET_Y = 6
 
 GEOMETRY_PATTERN = re.compile(r"(\d{2,5})x(\d{2,5})(?:([+-]\d{1,5})([+-]\d{1,5}))?")
 
@@ -140,6 +145,129 @@ def _clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
 
 
+def configure_dpi_scaling(root: object) -> float | None:
+    """Match Tk's scaling to the monitor DPI, returning the factor applied.
+
+    Windows reports a high-DPI monitor through ``winfo_fpixels`` only after the
+    process is made DPI-aware. The scaling factor keeps fonts and paddings
+    proportional instead of tiny on 125%, 150% and 200% displays.
+    """
+    fpixels = getattr(root, "winfo_fpixels", None)
+    tk_call = getattr(root, "tk", None)
+    call = getattr(tk_call, "call", None)
+    if fpixels is None or call is None:
+        return None
+
+    try:
+        pixels_per_inch = float(fpixels("1i"))
+    except (AttributeError, TypeError, ValueError, tk.TclError):
+        return None
+    if pixels_per_inch <= 0:
+        return None
+
+    scaling = pixels_per_inch / 72
+    with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+        call("tk", "scaling", scaling)
+    return scaling
+
+
+class Tooltip:
+    """Small hover tooltip implemented with plain Tkinter widgets."""
+
+    def __init__(
+        self,
+        widget: object,
+        text: str,
+        *,
+        delay_ms: int = TOOLTIP_DELAY_MS,
+    ) -> None:
+        """Bind ``widget`` so ``text`` appears after a short hover."""
+        self.widget = widget
+        self.text = text
+        self.delay_ms = delay_ms
+        self._window: tk.Toplevel | None = None
+        self._after_id: object | None = None
+        self._bind()
+
+    def _bind(self) -> None:
+        bind = getattr(self.widget, "bind", None)
+        if bind is None:
+            return
+        for sequence, handler in (
+            ("<Enter>", self._schedule),
+            ("<Leave>", self.hide),
+            ("<ButtonPress>", self.hide),
+        ):
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                bind(sequence, handler)
+
+    def _schedule(self, _event: object = None) -> None:
+        after = getattr(self.widget, "after", None)
+        if after is None or self._after_id is not None:
+            return
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            self._after_id = after(self.delay_ms, self._show)
+
+    def _show(self) -> None:
+        self._after_id = None
+        if self._window is not None:
+            return
+        try:
+            window = tk.Toplevel(self.widget)
+            window.wm_overrideredirect(boolean=True)
+            window.wm_geometry(f"+{self._position_x()}+{self._position_y()}")
+            tk.Label(
+                window,
+                text=self.text,
+                background=TOOLTIP_BACKGROUND,
+                foreground=TOOLTIP_FOREGROUND,
+                relief=tk.SOLID,
+                borderwidth=1,
+                padx=6,
+                pady=3,
+            ).pack()
+        except (AttributeError, RuntimeError, tk.TclError):
+            self._window = None
+            return
+        self._window = window
+
+    def _position_x(self) -> int:
+        getter = getattr(self.widget, "winfo_rootx", None)
+        if getter is None:
+            return 0
+        try:
+            return int(getter()) + TOOLTIP_OFFSET_X
+        except (AttributeError, TypeError, tk.TclError):
+            return 0
+
+    def _position_y(self) -> int:
+        root_getter = getattr(self.widget, "winfo_rooty", None)
+        height_getter = getattr(self.widget, "winfo_height", None)
+        try:
+            root_y = int(root_getter()) if root_getter is not None else 0
+            height = int(height_getter()) if height_getter is not None else 0
+        except (AttributeError, TypeError, tk.TclError):
+            return 0
+        return root_y + height + TOOLTIP_OFFSET_Y
+
+    def hide(self, _event: object = None) -> None:
+        """Hide the tooltip and cancel a pending appearance."""
+        after_cancel = getattr(self.widget, "after_cancel", None)
+        if after_cancel is not None and self._after_id is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                after_cancel(self._after_id)
+        self._after_id = None
+        window = self._window
+        self._window = None
+        if window is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                window.destroy()
+
+    def destroy(self) -> None:
+        """Remove the tooltip from the widget."""
+        self.hide()
+
+
 @dataclass(slots=True)
 class GuiVariables:
     """Tk variables shared between the app state and the widgets."""
@@ -169,6 +297,10 @@ class GuiActions:
     translate_project: Callable[[], None]
     choose_project: Callable[[], None]
     cancel: Callable[[], None]
+    restore_defaults: Callable[[], None]
+    copy_output: Callable[[], None]
+    save_output: Callable[[], None]
+    clear_output: Callable[[], None]
 
 
 class GuiView:
@@ -178,15 +310,20 @@ class GuiView:
         """Create an empty view; call :meth:`build` to create the widgets."""
         self.root: tk.Tk | None = None
         self.output_text: tk.Text | None = None
+        self.translation_text: tk.Text | None = None
         self.validation_label: ttk.Label | None = None
         self.progress: ttk.Progressbar | None = None
         self.cancel_button: ttk.Button | None = None
         self.interactive_widgets: list[object] = []
         self.action_buttons: list[object] = []
+        self.output_buttons: list[object] = []
         self.field_widgets: dict[str, object] = {}
+        self.multiline_fields: dict[str, object] = {}
+        self.tooltips: list[Tooltip] = []
         self.theme = DEFAULT_THEME
         self._style: ttk.Style | None = None
         self._actions: GuiActions | None = None
+        self._translation_variable: object | None = None
 
     def build(
         self,
@@ -202,7 +339,11 @@ class GuiView:
         self._style = self._create_style()
         self.interactive_widgets = []
         self.action_buttons = []
+        self.output_buttons = []
         self.field_widgets = {}
+        self.multiline_fields = {}
+        self.tooltips = []
+        self.translation_text = None
 
         main_frame = ttk.Frame(root, padding=14)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -223,6 +364,7 @@ class GuiView:
         )
         theme_combo.pack(side=tk.RIGHT)
         self.interactive_widgets.append(theme_combo)
+        self._add_tooltip(theme_combo, "Alterna entre os temas claro e escuro.")
         ttk.Label(header_row, text="Tema:").pack(side=tk.RIGHT, padx=(0, 6))
 
         ttk.Label(main_frame, text=f"Versão: {version}", style="Muted.TLabel").pack(anchor="w")
@@ -271,6 +413,31 @@ class GuiView:
             "sincronizar e traduzir recursos locais.\n",
         )
 
+        self._build_output_actions(main_frame, actions)
+
+        with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+            self.output_text.configure(state=tk.DISABLED)
+
+    def _add_tooltip(self, widget: object, text: str) -> Tooltip:
+        """Attach a hover tooltip to ``widget`` and keep it for cleanup."""
+        tooltip = Tooltip(widget, text)
+        self.tooltips.append(tooltip)
+        return tooltip
+
+    def _build_output_actions(self, parent: ttk.Frame, actions: GuiActions) -> None:
+        output_actions = ttk.Frame(parent)
+        output_actions.pack(fill=tk.X, pady=(6, 0))
+        buttons = (
+            ("Copiar", actions.copy_output, "Copia a saída para a área de transferência."),
+            ("Salvar", actions.save_output, "Salva a saída exibida em um arquivo .txt."),
+            ("Limpar", actions.clear_output, "Limpa a área de saída."),
+        )
+        for label, command, tip in buttons:
+            button = ttk.Button(output_actions, text=label, command=command)
+            button.pack(side=tk.LEFT, padx=(0, 8))
+            self.output_buttons.append(button)
+            self._add_tooltip(button, tip)
+
     def _build_form(self, parent: ttk.Frame, variables: GuiVariables) -> None:
         form = ttk.Frame(parent)
         form.pack(fill=tk.X, pady=(8, 12))
@@ -282,10 +449,12 @@ class GuiView:
             row=0,
             column=1,
             sticky="ew",
+            tooltip="Pasta raiz do projeto de traduções.",
         )
         select_button = ttk.Button(form, text="Selecionar", command=self._actions.choose_project)
         select_button.grid(row=0, column=2, pady=4)
         self.action_buttons.append(select_button)
+        self._add_tooltip(select_button, "Escolhe a pasta do projeto (Ctrl+O).")
 
         ttk.Label(form, text="Formato:").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
         format_combo = ttk.Combobox(
@@ -297,6 +466,7 @@ class GuiView:
         )
         format_combo.grid(row=1, column=1, sticky="w", padx=(0, 8), pady=4)
         self.interactive_widgets.append(format_combo)
+        self._add_tooltip(format_combo, "Formato dos arquivos de tradução do projeto.")
 
         ttk.Label(form, text="Origem:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
         self._register_entry(
@@ -305,6 +475,7 @@ class GuiView:
             row=2,
             column=1,
             sticky="ew",
+            tooltip="Idioma de origem, por exemplo pt_BR.",
         )
 
         ttk.Label(form, text="Destino:").grid(row=2, column=2, sticky="w", padx=(0, 8), pady=4)
@@ -314,12 +485,11 @@ class GuiView:
             row=2,
             column=3,
             sticky="ew",
+            tooltip="Idioma de destino, por exemplo en_US.",
         )
 
         ttk.Label(form, text="Texto:").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
-        text_entry = ttk.Entry(form, textvariable=variables.translation)
-        text_entry.grid(row=3, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=4)
-        self.interactive_widgets.append(text_entry)
+        self._build_translation_text(form, variables)
 
         ttk.Label(form, text="Motor:").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
         engine_combo = ttk.Combobox(
@@ -331,6 +501,7 @@ class GuiView:
         )
         engine_combo.grid(row=4, column=1, sticky="w", padx=(0, 8), pady=4)
         self.interactive_widgets.append(engine_combo)
+        self._add_tooltip(engine_combo, "Motor de tradução usado pela CLI.")
 
         ttk.Label(form, text="Dispositivo:").grid(row=4, column=2, sticky="w", padx=(0, 8), pady=4)
         device_combo = ttk.Combobox(
@@ -342,6 +513,7 @@ class GuiView:
         )
         device_combo.grid(row=4, column=3, sticky="w", padx=(0, 8), pady=4)
         self.interactive_widgets.append(device_combo)
+        self._add_tooltip(device_combo, "Dispositivo de execução (auto, cpu, cuda, mps, gpu).")
 
         ttk.Label(form, text="Modelo:").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=4)
         self._register_entry(
@@ -351,6 +523,7 @@ class GuiView:
             column=1,
             columnspan=3,
             sticky="ew",
+            tooltip="Modelo opcional; vazio usa o padrão do motor.",
         )
 
         sync_toggle = ttk.Checkbutton(
@@ -360,9 +533,114 @@ class GuiView:
         )
         sync_toggle.grid(row=6, column=0, columnspan=4, sticky="w", padx=(0, 8), pady=(4, 0))
         self.interactive_widgets.append(sync_toggle)
+        self._add_tooltip(sync_toggle, "Sincroniza sem gravar alterações nos arquivos.")
 
         form.columnconfigure(1, weight=1)
         form.columnconfigure(3, weight=1)
+
+    def _build_translation_text(self, form: ttk.Frame, variables: GuiVariables) -> None:
+        """Create the multiline text field and keep it in sync with the variable."""
+        text_widget = tk.Text(
+            form,
+            height=3,
+            wrap=tk.WORD,
+            relief=tk.FLAT,
+            highlightthickness=1,
+            padx=6,
+            pady=4,
+            undo=True,
+        )
+        text_widget.grid(row=3, column=1, columnspan=3, sticky="ew", padx=(0, 8), pady=4)
+        getter = getattr(variables.translation, "get", None)
+        if getter is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                initial = str(getter())
+                if initial:
+                    text_widget.insert("1.0", initial)
+        self.translation_text = text_widget
+        self.multiline_fields["translation"] = text_widget
+        self.field_widgets["translation"] = text_widget
+        self.interactive_widgets.append(text_widget)
+        self._translation_variable = variables.translation
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            text_widget.bind("<<Modified>>", self._on_translation_modified)
+        self._add_tooltip(text_widget, "Texto a traduzir. Enter valida o formulário.")
+
+    def _on_translation_modified(self, _event: object = None) -> None:
+        self._sync_translation_text()
+
+    def _sync_translation_text(self) -> None:
+        """Copy the multiline widget content into the bound Tk variable."""
+        widget = self.translation_text
+        variable = self._translation_variable
+        if widget is None or variable is None:
+            return
+
+        edit_modified = getattr(widget, "edit_modified", None)
+        if edit_modified is not None:
+            try:
+                if not edit_modified():
+                    return
+            except (AttributeError, RuntimeError, tk.TclError):
+                pass
+
+        getter = getattr(widget, "get", None)
+        setter = getattr(variable, "set", None)
+        if getter is None or setter is None:
+            return
+        try:
+            value = str(getter("1.0", "end-1c"))
+            setter(value)
+        except (AttributeError, RuntimeError, tk.TclError):
+            return
+        if edit_modified is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                edit_modified(arg=False)
+
+    def set_translation_text(self, value: str) -> None:
+        """Replace the multiline widget content without echoing the change back."""
+        widget = self.translation_text
+        if widget is None:
+            return
+
+        getter = getattr(widget, "get", None)
+        if getter is not None:
+            try:
+                if str(getter("1.0", "end-1c")) == value:
+                    return
+            except (AttributeError, RuntimeError, tk.TclError):
+                return
+
+        configure = getattr(widget, "configure", None)
+        previous_state: str | None = None
+        cget = getattr(widget, "cget", None)
+        if cget is not None:
+            with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                previous_state = str(cget("state"))
+        if configure is not None:
+            with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                configure(state=tk.NORMAL)
+        try:
+            widget.delete("1.0", tk.END)
+            if value:
+                widget.insert("1.0", value)
+        except (AttributeError, RuntimeError, tk.TclError):
+            return
+        finally:
+            if configure is not None and previous_state is not None:
+                with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                    configure(state=previous_state)
+
+    def translation_content(self) -> str:
+        """Return the current multiline text content."""
+        widget = self.translation_text
+        getter = getattr(widget, "get", None) if widget is not None else None
+        if getter is None:
+            return ""
+        try:
+            return str(getter("1.0", "end-1c"))
+        except (AttributeError, RuntimeError, tk.TclError):
+            return ""
 
     def _register_entry(
         self,
@@ -373,6 +651,7 @@ class GuiView:
         column: int,
         columnspan: int = 1,
         sticky: str = "ew",
+        tooltip: str | None = None,
     ) -> None:
         widget.grid(
             row=row,
@@ -384,6 +663,8 @@ class GuiView:
         )
         self.interactive_widgets.append(widget)
         self.field_widgets[name] = widget
+        if tooltip:
+            self._add_tooltip(widget, tooltip)
 
     def _build_actions(self, parent: ttk.Frame, actions: GuiActions) -> None:
         actions_frame = ttk.Frame(parent)
@@ -396,18 +677,31 @@ class GuiView:
             state=tk.DISABLED,
         )
         self.cancel_button.pack(side=tk.RIGHT)
+        self._add_tooltip(self.cancel_button, "Interrompe a operação em andamento (Esc).")
 
         buttons = (
-            ("Validar", actions.validate, "Accent.TButton"),
-            ("Sincronizar", actions.sync, "TButton"),
-            ("Listar idiomas", actions.list_locales, "TButton"),
-            ("Traduzir", actions.translate, "TButton"),
-            ("Traduzir Projeto", actions.translate_project, "TButton"),
+            ("Validar", actions.validate, "Accent.TButton", "Valida os recursos do projeto (F5)."),
+            ("Sincronizar", actions.sync, "TButton", "Sincroniza os arquivos de tradução."),
+            ("Listar idiomas", actions.list_locales, "TButton", "Lista os locales encontrados."),
+            ("Traduzir", actions.translate, "TButton", "Traduz o texto informado no campo Texto."),
+            (
+                "Traduzir Projeto",
+                actions.translate_project,
+                "TButton",
+                "Traduz todos os recursos do projeto.",
+            ),
+            (
+                "Restaurar padrões",
+                actions.restore_defaults,
+                "TButton",
+                "Volta aos valores padrão, mantendo o tema atual.",
+            ),
         )
-        for label, command, style in buttons:
+        for label, command, style, tip in buttons:
             button = ttk.Button(actions_frame, text=label, command=command, style=style)
             button.pack(side=tk.LEFT, padx=(0, 8))
             self.action_buttons.append(button)
+            self._add_tooltip(button, tip)
 
     def _create_style(self) -> ttk.Style | None:
         if self.root is None:
@@ -425,6 +719,7 @@ class GuiView:
         self.theme = theme.name
         self._configure_styles(theme)
         self._configure_output(theme)
+        self._configure_text_fields(theme)
         return theme.name
 
     def _configure_styles(self, theme: Theme) -> None:
@@ -514,6 +809,19 @@ class GuiView:
                 highlightcolor=theme.accent,
             )
 
+    def _configure_text_fields(self, theme: Theme) -> None:
+        for widget in self.multiline_fields.values():
+            with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                widget.configure(
+                    background=theme.surface,
+                    foreground=theme.foreground,
+                    insertbackground=theme.foreground,
+                    selectbackground=theme.selection,
+                    selectforeground=theme.foreground,
+                    highlightbackground=theme.border,
+                    highlightcolor=theme.accent,
+                )
+
     def show_validation_state(self, *, is_error: bool) -> None:
         """Recolor the inline validation label for an error or success state."""
         if self.validation_label is None:
@@ -522,11 +830,23 @@ class GuiView:
             self.validation_label.configure(style="Error.TLabel" if is_error else "Ok.TLabel")
 
     def mark_invalid(self, invalid_fields: Container[str]) -> None:
-        """Highlight the entries whose names appear in ``invalid_fields``."""
+        """Highlight the fields whose names appear in ``invalid_fields``."""
         for name, widget in self.field_widgets.items():
-            style = INVALID_ENTRY_STYLE if name in invalid_fields else NORMAL_ENTRY_STYLE
+            is_invalid = name in invalid_fields
+            if name in self.multiline_fields:
+                self._style_multiline_field(widget, invalid=is_invalid)
+                continue
+            style = INVALID_ENTRY_STYLE if is_invalid else NORMAL_ENTRY_STYLE
             with contextlib.suppress(AttributeError, TypeError, tk.TclError):
                 widget.configure(style=style)
+
+    def _style_multiline_field(self, widget: object, *, invalid: bool) -> None:
+        theme = resolve_theme(self.theme)
+        with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+            widget.configure(
+                highlightcolor=theme.error if invalid else theme.accent,
+                highlightbackground=theme.error if invalid else theme.border,
+            )
 
     def focus_field(self, name: str) -> None:
         """Move keyboard focus to the entry registered under ``name``."""
@@ -551,14 +871,35 @@ class GuiView:
             with contextlib.suppress(AttributeError, TypeError, tk.TclError):
                 self.cancel_button.configure(state=tk.NORMAL if busy else tk.DISABLED)
 
+    @contextlib.contextmanager
+    def _writable_output(self) -> Iterator[object]:
+        """Temporarily unlock the read-only output pane while writing to it."""
+        text = self.output_text
+        if text is None:
+            yield None
+            return
+        configure = getattr(text, "configure", None)
+        if configure is not None:
+            with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                configure(state=tk.NORMAL)
+        try:
+            yield text
+        finally:
+            if configure is not None:
+                with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+                    configure(state=tk.DISABLED)
+
     def show_output(self, text: str) -> bool:
         """Replace the output pane content, returning False when the UI is gone."""
         if self.output_text is None:
             return True
         try:
-            self.output_text.delete("1.0", tk.END)
-            self.output_text.insert(tk.END, text.strip() or "Nenhuma saída do comando.")
-            self.output_text.see(tk.END)
+            with self._writable_output() as widget:
+                if widget is None:
+                    return True
+                widget.delete("1.0", tk.END)
+                widget.insert(tk.END, text.strip() or "Nenhuma saída do comando.")
+                widget.see(tk.END)
         except (AttributeError, RuntimeError, tk.TclError):
             return False
         return True
@@ -568,8 +909,11 @@ class GuiView:
         if self.output_text is None:
             return True
         try:
-            self.output_text.insert(tk.END, f"{line}\n")
-            self.output_text.see(tk.END)
+            with self._writable_output() as widget:
+                if widget is None:
+                    return True
+                widget.insert(tk.END, f"{line}\n")
+                widget.see(tk.END)
         except (AttributeError, RuntimeError, tk.TclError):
             return False
         return True
@@ -579,10 +923,24 @@ class GuiView:
         if self.output_text is None:
             return True
         try:
-            self.output_text.delete("1.0", tk.END)
+            with self._writable_output() as widget:
+                if widget is None:
+                    return True
+                widget.delete("1.0", tk.END)
         except (AttributeError, RuntimeError, tk.TclError):
             return False
         return True
+
+    def output_content(self) -> str:
+        """Return the current output pane text, without the trailing newline."""
+        text = self.output_text
+        getter = getattr(text, "get", None) if text is not None else None
+        if getter is None:
+            return ""
+        try:
+            return str(getter("1.0", tk.END)).rstrip("\n")
+        except (AttributeError, RuntimeError, tk.TclError):
+            return ""
 
     def geometry(self) -> str:
         """Return the current window geometry, or an empty string when unknown."""

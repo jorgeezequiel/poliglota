@@ -9,13 +9,15 @@ progress bar, output pane, geometry and shortcuts) lives in
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import logging
 import queue
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,6 +52,7 @@ from .gui_view import (
     GuiActions,
     GuiVariables,
     GuiView,
+    configure_dpi_scaling,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,6 +63,7 @@ FIELD_LABELS: dict[str, str] = {
     "source": "Idioma de origem",
     "target": "Idioma de destino",
     "model": "Modelo",
+    "translation": "Texto",
 }
 
 #: Fields each GUI command actually consumes, so validation never blocks
@@ -75,6 +79,44 @@ COMMAND_REQUIREMENTS: dict[str, tuple[str, ...]] = {
 
 #: Maximum time (seconds) a CLI command may run before being killed.
 COMMAND_TIMEOUT_SECONDS = 300
+
+#: How often (ms) the status line refreshes the running operation's elapsed time.
+ELAPSED_INTERVAL_MS = 200
+
+#: Default file name offered by the "Salvar" button.
+DEFAULT_OUTPUT_FILE_NAME = "poliglota-saida.txt"
+
+
+def _apply_windows_dpi_awareness() -> bool:
+    """Enable DPI awareness through the Windows API, when available."""
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return False
+
+    shcore = getattr(windll, "shcore", None)
+    if shcore is not None:
+        try:
+            shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            pass
+        else:
+            return True
+
+    user32 = getattr(windll, "user32", None)
+    if user32 is None:
+        return False
+    try:
+        user32.SetProcessDPIAware()
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
+def enable_high_dpi() -> bool:
+    """Make the process DPI-aware on Windows, returning whether it worked."""
+    if sys.platform != "win32":
+        return False
+    return _apply_windows_dpi_awareness()
 
 
 class PoliglotaGUI:
@@ -126,6 +168,9 @@ class PoliglotaGUI:
         self._process: subprocess.Popen[str] | None = None
         self._cancel_requested = False
         self._streamed_output = False
+        self._elapsed_token = 0
+        self._operation_started = 0.0
+        self._operation_message = ""
 
     @property
     def root(self) -> tk.Tk | None:
@@ -288,6 +333,63 @@ class PoliglotaGUI:
         if not self.view.clear_output():
             self._window_closed = True
 
+    def _handle_clear_output(self) -> None:
+        """Clear the output pane on the user's request."""
+        self._clear_output()
+        self._set_status("Saída limpa.")
+
+    def _copy_output(self) -> None:
+        """Copy the current output pane content to the clipboard."""
+        content = self.view.output_content()
+        if not content:
+            self._set_status("Não há saída para copiar.")
+            return
+        root = self.root
+        clear = getattr(root, "clipboard_clear", None)
+        append = getattr(root, "clipboard_append", None)
+        if clear is None or append is None:
+            self._set_status("Área de transferência indisponível.")
+            return
+        try:
+            clear()
+            append(content)
+        except (AttributeError, RuntimeError, tk.TclError):
+            self._set_status("Não foi possível copiar a saída.")
+            return
+        self._set_status("Saída copiada para a área de transferência.")
+
+    def _save_output(self) -> None:
+        """Save the current output pane content to a user-chosen file."""
+        if self.root is None or self._window_closed or not self._is_window_alive():
+            return
+        content = self.view.output_content()
+        if not content:
+            self._set_status("Não há saída para salvar.")
+            return
+        try:
+            selected = filedialog.asksaveasfilename(
+                parent=self.root,
+                title="Salvar saída",
+                defaultextension=".txt",
+                initialfile=DEFAULT_OUTPUT_FILE_NAME,
+                filetypes=(
+                    ("Arquivo de texto", "*.txt"),
+                    ("Todos os arquivos", "*.*"),
+                ),
+            )
+        except (AttributeError, RuntimeError, tk.TclError):
+            return
+        if not selected:
+            self._set_status("Salvamento cancelado.")
+            return
+        try:
+            Path(selected).write_text(f"{content}\n", encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Could not save GUI output to %s: %s", selected, exc)
+            self._set_status(f"Não foi possível salvar a saída: {exc}")
+            return
+        self._set_status(f"Saída salva em {selected}.")
+
     def _stream_line(self, line: str) -> None:
         """Receive one CLI output line from the worker thread."""
         self._streamed_output = True
@@ -342,14 +444,37 @@ class PoliglotaGUI:
         self._is_running = True
         self._cancel_requested = False
         self._streamed_output = False
+        self._operation_started = time.monotonic()
+        self._operation_message = message
+        self._elapsed_token += 1
         self._set_controls_enabled(enabled=False)
         self.view.set_busy(busy=True)
         self._set_status(message)
+        self._schedule_elapsed_tick(self._elapsed_token)
         return True
+
+    def _schedule_elapsed_tick(self, token: int) -> None:
+        """Schedule the next status refresh that shows elapsed time."""
+        if self.root is None or not self._is_window_alive():
+            return
+        after = getattr(self.root, "after", None)
+        if after is None:
+            return
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            after(ELAPSED_INTERVAL_MS, lambda: self._elapsed_tick(token))
+
+    def _elapsed_tick(self, token: int) -> None:
+        """Refresh the status line with the running operation's elapsed time."""
+        if token != self._elapsed_token or not self._is_running:
+            return
+        elapsed = max(time.monotonic() - self._operation_started, 0.0)
+        self._set_status(f"{self._operation_message} ({elapsed:.1f}s)")
+        self._schedule_elapsed_tick(token)
 
     def _complete_operation(self, *, status_message: str | None = None) -> None:
         self._is_running = False
         self._cancel_requested = False
+        self._elapsed_token += 1
         self._set_controls_enabled(enabled=True)
         self.view.set_busy(busy=False)
         if status_message is not None:
@@ -384,11 +509,16 @@ class PoliglotaGUI:
     @staticmethod
     def _var_value(var: object | None) -> str:
         """Return the stripped text held by a Tk variable, or an empty string."""
+        return PoliglotaGUI._raw_var_value(var).strip()
+
+    @staticmethod
+    def _raw_var_value(var: object | None) -> str:
+        """Return the raw text held by a Tk variable, preserving whitespace."""
         getter = getattr(var, "get", None)
         if getter is None:
             return ""
         try:
-            return str(getter()).strip()
+            return str(getter())
         except (AttributeError, RuntimeError, tk.TclError):
             return ""
 
@@ -409,7 +539,11 @@ class PoliglotaGUI:
 
     def _refresh_validation(self) -> None:
         """Re-run field validation, highlight invalid entries and update the label."""
-        self._validation_results = self._collect_validation_results()
+        results = self._collect_validation_results()
+        text_value = self._var_value(self.translation_var)
+        if text_value:
+            results["translation"] = validate_translation_text(text_value)
+        self._validation_results = results
         invalid = [
             (name, result)
             for name, result in self._validation_results.items()
@@ -458,6 +592,13 @@ class PoliglotaGUI:
         """React to a field change: refresh validation and queue a state save."""
         self._refresh_validation()
         self._schedule_state_save()
+
+    def _on_translation_text_changed(self, *_args: object) -> None:
+        """Mirror the text variable into the multiline widget and revalidate."""
+        if not self._ui_built:
+            return
+        self.view.set_translation_text(self._raw_var_value(self.translation_var))
+        self._refresh_validation()
 
     def _on_theme_changed(self, *_args: object) -> None:
         """Apply the selected theme and remember the choice."""
@@ -797,10 +938,12 @@ class PoliglotaGUI:
         if self.headless:
             return
 
+        enable_high_dpi()
         self.root = tk.Tk()
         self.root.title(f"Poliglota {__version__}")
         self.root.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self._close_window)
+        configure_dpi_scaling(self.root)
 
         self.state = load_state(self.state_path)
         if not self._explicit_project_root and self.state.project_root:
@@ -846,6 +989,10 @@ class PoliglotaGUI:
             translate_project=self._handle_translate_project,
             choose_project=self._choose_project_dir,
             cancel=self._cancel_operation,
+            restore_defaults=self._restore_defaults,
+            copy_output=self._copy_output,
+            save_output=self._save_output,
+            clear_output=self._handle_clear_output,
         )
 
         self.view.build(
@@ -872,11 +1019,54 @@ class PoliglotaGUI:
         ):
             variable.trace_add("write", self._on_form_changed)
         self.theme_var.trace_add("write", self._on_theme_changed)
+        self.translation_var.trace_add("write", self._on_translation_text_changed)
 
         self._ui_built = True
         self._refresh_validation()
 
+    def _restore_defaults(self) -> None:
+        """Reset the form to the built-in defaults, keeping the current theme."""
+        defaults = GuiState()
+        theme = self._var_value(self.theme_var) or self.view.theme
+        values = (
+            (self.project_var, str(self.project_root)),
+            (self.format_var, defaults.format),
+            (self.source_var, defaults.source_locale),
+            (self.target_var, defaults.target_locale),
+            (self.engine_var, defaults.engine),
+            (self.device_var, defaults.device),
+            (self.model_var, defaults.model_name),
+            (self.sync_dry_run_var, defaults.dry_run),
+            (self.translation_var, ""),
+            (self.theme_var, theme),
+        )
+        for variable, value in values:
+            if variable is None:
+                continue
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                variable.set(value)
+        self._refresh_validation()
+        self._schedule_state_save()
+        self._set_status("Padrões restaurados.")
+
+    def _confirm_close(self) -> bool:
+        """Ask the user before closing the window during a running operation."""
+        ask = getattr(messagebox, "askyesno", None)
+        if ask is None:
+            return True
+        try:
+            return bool(
+                ask(
+                    "Poliglota",
+                    "Uma operação está em andamento. Deseja realmente fechar a janela?",
+                ),
+            )
+        except (AttributeError, RuntimeError, tk.TclError):
+            return True
+
     def _close_window(self) -> None:
+        if self._is_running and not self._confirm_close():
+            return
         self._cancel_state_save()
         self._cancel_requested = True
         self._terminate_process()

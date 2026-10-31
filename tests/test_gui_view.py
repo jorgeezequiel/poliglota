@@ -12,6 +12,8 @@ from poliglota.gui_view import (
     THEMES,
     GuiActions,
     GuiView,
+    Tooltip,
+    configure_dpi_scaling,
     normalize_geometry,
     resolve_theme,
 )
@@ -100,6 +102,10 @@ def _actions(calls: list[str]) -> GuiActions:
         translate_project=record("translate_project"),
         choose_project=record("choose_project"),
         cancel=record("cancel"),
+        restore_defaults=record("restore_defaults"),
+        copy_output=record("copy_output"),
+        save_output=record("save_output"),
+        clear_output=record("clear_output"),
     )
 
 
@@ -328,3 +334,238 @@ def test_view_geometry_tolerates_a_root_without_geometry_support() -> None:
 
     assert view.geometry() == ""
     assert view.apply_geometry("1000x700+10+10") == "1000x700+10+10"
+
+
+class StatefulText(DummyText):
+    def __init__(self) -> None:
+        super().__init__()
+        self.state = "normal"
+        self.states: list[str] = []
+
+    def configure(self, **kwargs: object) -> None:
+        if "state" in kwargs:
+            self.state = str(kwargs["state"])
+            self.states.append(self.state)
+
+    def get(self, *_args: object) -> str:
+        return f"{self.text}\n"
+
+
+class EditableText:
+    def __init__(self) -> None:
+        self.text = ""
+        self.state = "normal"
+        self.options: dict[str, object] = {}
+
+    def configure(self, **kwargs: object) -> None:
+        self.options.update(kwargs)
+        if "state" in kwargs:
+            self.state = str(kwargs["state"])
+
+    def cget(self, _option: str) -> str:
+        return self.state
+
+    def get(self, *_args: object) -> str:
+        return self.text
+
+    def delete(self, *_args: object) -> None:
+        self.text = ""
+
+    def insert(self, _index: object, value: str) -> None:
+        self.text += value
+
+
+class TooltipWidget(DummyEntry):
+    def __init__(self) -> None:
+        super().__init__()
+        self.after_calls: list[tuple[int, Callable[[], None]]] = []
+        self.cancelled: list[object] = []
+
+    def after(self, delay: int, callback: Callable[[], None]) -> object:
+        self.after_calls.append((delay, callback))
+        return object()
+
+    def after_cancel(self, callback_id: object) -> None:
+        self.cancelled.append(callback_id)
+
+
+class ModifiedText(EditableText):
+    def __init__(self) -> None:
+        super().__init__()
+        self.modified = True
+
+    def edit_modified(self, arg: bool | None = None) -> bool:
+        if arg is None:
+            return self.modified
+        self.modified = arg
+        return self.modified
+
+
+class RecordingVar:
+    def __init__(self, value: str = "") -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
+class ScaledRoot:
+    def __init__(self, pixels_per_inch: float) -> None:
+        self.pixels_per_inch = pixels_per_inch
+        self.tk = self
+        self.calls: list[tuple[object, ...]] = []
+
+    def winfo_fpixels(self, _unit: str) -> float:
+        return self.pixels_per_inch
+
+    def call(self, *args: object) -> None:
+        self.calls.append(args)
+
+
+@pytest.mark.unit
+def test_tooltip_binds_and_stores_its_text() -> None:
+    widget = TooltipWidget()
+    tooltip = Tooltip(widget, "dica de uso", delay_ms=100)
+
+    assert tooltip.text == "dica de uso"
+    assert set(widget.bindings) == {"<Enter>", "<Leave>", "<ButtonPress>"}
+
+    widget.bindings["<Enter>"](object())
+
+    assert widget.after_calls[0][0] == 100
+
+    tooltip.hide()
+
+    assert tooltip._window is None
+    assert widget.cancelled
+
+
+@pytest.mark.unit
+def test_tooltip_is_a_no_op_without_binding_support() -> None:
+    tooltip = Tooltip(object(), "dica")
+
+    tooltip._schedule()
+    tooltip.hide()
+
+    assert tooltip._window is None
+
+
+@pytest.mark.unit
+def test_view_output_writes_unlock_and_relock_the_pane() -> None:
+    view = GuiView()
+    text = StatefulText()
+    view.output_text = text  # type: ignore[assignment]
+
+    assert view.show_output("resultado") is True
+    assert text.text == "resultado"
+    assert text.states[-1] == "disabled"
+
+    assert view.append_output("linha") is True
+    assert text.states[-1] == "disabled"
+
+    assert view.clear_output() is True
+    assert text.states[-1] == "disabled"
+
+
+@pytest.mark.unit
+def test_view_output_content_strips_the_trailing_newline() -> None:
+    view = GuiView()
+    text = StatefulText()
+    text.text = "conteúdo"
+    view.output_text = text  # type: ignore[assignment]
+
+    assert view.output_content() == "conteúdo"
+
+
+@pytest.mark.unit
+def test_view_output_content_is_empty_without_a_getter() -> None:
+    view = GuiView()
+    view.output_text = DummyText()  # type: ignore[assignment]
+
+    assert view.output_content() == ""
+
+
+@pytest.mark.unit
+def test_view_multiline_field_uses_highlight_instead_of_entry_style() -> None:
+    view = GuiView()
+    text = EditableText()
+    view.multiline_fields = {"translation": text}
+    view.field_widgets = {"translation": text}
+
+    view.mark_invalid({"translation"})
+
+    assert text.options["highlightcolor"] == THEMES[DEFAULT_THEME].error
+    assert "style" not in text.options
+
+    view.mark_invalid(set())
+
+    assert text.options["highlightcolor"] == THEMES[DEFAULT_THEME].accent
+
+
+@pytest.mark.unit
+def test_view_sets_and_reads_the_multiline_text() -> None:
+    view = GuiView()
+    text = EditableText()
+    view.translation_text = text  # type: ignore[assignment]
+
+    view.set_translation_text("primeira linha\nsegunda linha")
+
+    assert text.text == "primeira linha\nsegunda linha"
+    assert text.state == "normal"
+    assert view.translation_content() == "primeira linha\nsegunda linha"
+
+    view.set_translation_text("primeira linha\nsegunda linha")
+
+    assert view.translation_content() == "primeira linha\nsegunda linha"
+
+
+@pytest.mark.unit
+def test_view_multiline_helpers_are_no_ops_without_a_widget() -> None:
+    view = GuiView()
+
+    view.set_translation_text("texto")
+
+    assert view.translation_content() == ""
+
+
+@pytest.mark.unit
+def test_view_syncs_typed_text_into_the_bound_variable() -> None:
+    view = GuiView()
+    text = ModifiedText()
+    text.text = "digitado"
+    variable = RecordingVar()
+    view.translation_text = text  # type: ignore[assignment]
+    view._translation_variable = variable
+
+    view._sync_translation_text()
+
+    assert variable.value == "digitado"
+    assert text.modified is False
+
+    text.modified = False
+    view._sync_translation_text()
+
+    assert variable.value == "digitado"
+
+
+@pytest.mark.unit
+def test_configure_dpi_scaling_applies_the_monitor_ratio() -> None:
+    root = ScaledRoot(144.0)
+
+    scaling = configure_dpi_scaling(root)
+
+    assert scaling == pytest.approx(2.0)
+    assert root.calls == [("tk", "scaling", 2.0)]
+
+
+@pytest.mark.unit
+def test_configure_dpi_scaling_is_a_no_op_without_root_support() -> None:
+    assert configure_dpi_scaling(object()) is None
+
+
+@pytest.mark.unit
+def test_configure_dpi_scaling_rejects_invalid_pixel_ratios() -> None:
+    assert configure_dpi_scaling(ScaledRoot(0.0)) is None
