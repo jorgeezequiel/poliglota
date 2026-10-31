@@ -1,103 +1,103 @@
-# Architecture overview
+# Visão geral da arquitetura
 
-Poliglota separates localization formats, translation engines and the command
-line so each layer can evolve independently. The current state is:
+Poliglota separa três pontos principais: formatos, motores de tradução e interface de execução. Essa divisão permite evoluir cada camada sem misturar o contrato de arquivo de localização com a lógica de inferência local.
 
-- core contracts (locale, translation data, engine and format protocols);
-- four format adapters: ARB, JSON, YAML and XML;
-- optional local engines (Marian and PyTorch) plus an in-memory response cache;
-- quality helpers for glossary, placeholders and validation;
-- the CLI commands `validate`, `sync`, `list-locales` and `translate`.
+## 1. Camadas do projeto
 
-Translation is optional and local: it requires the `[gpu]` extra and a model
-that is already available on disk. The project never downloads models on its
-own.
-
-## Layers
-
-```
+```text
 poliglota/
-├── core/          # format- and engine-agnostic contracts
-│   ├── locale.py       # Locale
-│   ├── translation.py  # TranslationRequest / TranslationResult / TranslationIssue
-│   ├── engine.py       # TranslationEngine protocol
-│   ├── format.py       # FormatAdapter protocol, LocalizedResource/Document
-│   └── quality.py      # quality-related contracts
-├── formats/       # concrete readers/writers for localization formats
-│   ├── arb.py          # ARB: parsing, discovery, validation, sync, adapter
-│   ├── json.py         # JSON adapter
-│   ├── yaml.py         # YAML adapter
-│   ├── xml.py          # XML adapter (defusedxml)
-│   └── registry_init.py # runtime adapter registry
-├── engines/       # local translation engines and support utilities
-│   ├── marian.py       # Marian/Opus-MT adapter
+├── core/
+│   ├── locale.py
+│   ├── translation.py
+│   ├── engine.py
+│   ├── format.py
+│   └── quality.py
+├── formats/
+│   ├── arb.py
+│   ├── json.py
+│   ├── yaml.py
+│   ├── xml.py
+│   └── registry_init.py
+├── engines/
+│   ├── marian.py
 │   ├── pytorch_engine.py
-│   ├── response_cache.py # optional in-memory cache
-│   └── request_queue.py  # optional helper (not wired into the CLI)
-├── quality/       # glossary, placeholder and validation helpers
-├── gpu.py         # device detection and validation
-├── config.py      # convenience defaults used by the CLI
-└── cli.py         # argparse-based command line
+│   ├── response_cache.py
+│   └── request_queue.py
+├── quality/
+│   ├── glossary.py
+│   ├── placeholders.py
+│   └── validation.py
+├── cli.py
+├── gui.py
+├── gui_app.py
+├── gpu.py
+├── config.py
+└── model_catalog.py
 ```
 
-### `core` - contracts
+## 2. `core`
 
-`poliglota.core` is deliberately free of any format or engine specifics. A test
-(`tests/test_core_contracts.py`) parses every module in `core/` and fails if one
-of them imports `poliglota.formats` or anything ARB-related. This keeps the
-contracts reusable for other formats and engines.
+O pacote `poliglota/core` guarda contratos e estruturas genéricas. Ele não depende de ARB ou de qualquer engine específico. Esse desenho foi pensado para que os adapters novos e os motores novos possam evoluir sem acoplar a infraestrutura central a um único formato.
 
-- `Locale` - a language/region identifier chosen by the caller. It performs no
-  normalization: the *tool* code (e.g. `pt_BR`) and the *engine* code (e.g.
-  `pb` for Argos, `por_Latn` for NLLB) are different things and must be mapped
-  explicitly, never silently.
-- `TranslationRequest` / `TranslationResult` / `TranslationIssue` - plain data
-  describing what to translate and what came back, plus warnings/errors.
-- `TranslationEngine` - a `Protocol` (structural type). It has `name`,
-  `engine_language(locale)`, `supports(source, target)` and `translate(...)`.
-- `FormatAdapter` / `LocalizedResource` / `LocalizedDocument` - the shape every
-  format adapter exposes so the CLI and future orchestration can stay generic.
+## 3. `formats`
 
-### `formats` - adapters
+Os adapters concretos vivem em `poliglota/formats`:
 
-`poliglota.formats.arb` implements full ARB support and the `FormatAdapter`
-contract (`ARBFormatAdapter`, `name == "arb"`), including placeholder checks,
-locale inference and round-trip I/O. ARB is the reference implementation and
-the default `--format`.
+- `arb.py` — adapter de referência com suporte mais completo;
+- `json.py` — leitura/escrita genérica de arquivos JSON;
+- `yaml.py` — leitura/escrita genérica de arquivos YAML;
+- `xml.py` — leitura/escrita genérica com `defusedxml`.
 
-The JSON, YAML and XML adapters implement the same contract with generic
-read/write operations. They are registered in
-`poliglota/formats/registry_init.py` and are covered by
-`tests/test_formats_registry.py`, `tests/test_formats_roundtrip.py` and
-`tests/test_cli_multiformat.py`. Format-specific validation for them is limited
-compared with ARB. CSV and gettext have no adapter.
+O registry em `registry_init.py` registra os adapters disponíveis no runtime.
 
-### `engines` - local translation
+## 4. `engines`
 
-- `marian.py` wraps Hugging Face sequence-to-sequence models and resolves the
-  default model for a language pair from `_DEFAULT_MOTOR_PRIORITY` in
-  `poliglota/cli.py`.
-- `pytorch_engine.py` provides the alternative `pytorch` engine path.
-- `response_cache.py` implements `ResponseCache`, an opt-in in-memory cache
-  disabled by default.
-- `request_queue.py` implements `RequestQueue`/`QueueFullError` as an optional
-  utility; it is not part of the CLI execution path.
+A parte de tradução local fica em `poliglota/engines`.
 
-### `quality` - glossary and placeholders
+- `marian.py` é o path de motor local para modelos Marian/Opus-MT;
+- `pytorch_engine.py` é o path alternativo com PyTorch;
+- `response_cache.py` estabelece um cache opcional em memória;
+- `request_queue.py` é uma utilidade adicional, mas não faz parte do caminho principal da CLI.
 
-`poliglota.quality` hosts glossary handling (`glossary.py`), placeholder
-protection (`placeholders.py`) and validation helpers (`validation.py`). The
-package has an explicit `__init__.py` so it matches the package list declared in
-`pyproject.toml`.
+## 5. `quality`
 
-### Compatibility shims
+A camada `quality` reúne verificações de domínio:
 
-`poliglota/arb_reader.py`, `models.py`, `validator.py` and `syncer.py` are thin
-re-export shims pointing at `poliglota.formats.arb`, so existing imports keep
-working. New code should import from `poliglota.formats.arb` directly.
+- glossário;
+- placeholders;
+- validação de estrutura e chaves.
 
-### `cli`
+## 6. `cli`
 
-`poliglota.cli` wires the adapters and engines to the four commands:
-`validate`, `sync`, `list-locales` and `translate`. `--format` always selects
-the *adapter* (`arb`, `json`, `yaml`, `xml`); it is not an output format option.
+A CLI é a interface pública atual do projeto. Ela chama a camada de registros, adapters e engines para executar operações reais. Os comandos públicos do código atual são:
+
+- `validate`
+- `sync`
+- `list-locales`
+- `translate`
+- `translate-project`
+- `prepare-model`
+- `gui`
+
+## 7. `gpu` e catálogo de modelos
+
+A detecção de dispositivos e o catálogo de compatibilidade fica separado em:
+
+- `poliglota/gpu.py` — validação de dispositivo e geração de contexto de execução;
+- `poliglota/model_catalog.py` — compatibilidade por par de idiomas e prioridade de modelos.
+
+Esse desenho ajuda a manter a lógica de hardware e a lógica de escolha de modelo separadas da leitura/escrita de arquivos.
+
+## 8. Limitações da arquitetura atual
+
+- a lógica de locale depende do nome dos arquivos e do padrão do projeto;
+- o modelo e a cache local continuam sendo requisitos de entorno do usuário;
+- a CLI é a referência real, e a GUI é um wrapper visual em cima dela;
+- o suporte a formatos genéricos tende a ser mais leve do que o suporte especializado de ARB.
+
+## 9. Referências
+
+- [docs/guides/usage.md](../guides/usage.md)
+- [docs/guides/translation-engine.md](../guides/translation-engine.md)
+- [docs/LIMITATIONS.md](../LIMITATIONS.md)
+- [poliglota/cli.py](../../poliglota/cli.py)

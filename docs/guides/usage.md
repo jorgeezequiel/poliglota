@@ -1,38 +1,37 @@
 # Uso da CLI
 
-A CLI do Poliglota concentra validação, sincronização, descoberta de locales e tradução local.
+A CLI do Poliglota concentra validação, sincronização, descoberta de locales, tradução de texto e tradução de projetos.
 
 ```bash
 poliglota --help
 ```
 
-## Validar recursos
+## 1. Validar recursos
 
 ```bash
 poliglota validate --root . --source pt_BR --format arb
 ```
 
-Opções:
+Parâmetros principais:
 
 | Opção | Descrição |
-|---|---|
-| `--root` | Raiz do projeto a ser varrida (padrão: diretório atual) |
-| `--source` | Locale de origem usado como referência |
-| `--format` | `arb` (padrão), `yaml`, `json` ou `xml` |
-| `--glossary` | Arquivo de glossário em JSON ou CSV |
-| `--locale` | Locale de destino para validar o glossário (padrão: todos) |
-| `--check-keys` | Valida presença de chaves (ativo por padrão) |
-| `--check-placeholders` | Valida consistência de placeholders (ativo por padrão) |
-| `--check-glossary` | Valida cobertura de termos do glossário (requer `--glossary`) |
+| --- | --- |
+| `--root` | raiz do projeto a ser varrida |
+| `--source` | locale de origem usado como referência |
+| `--format` | `arb`, `yaml`, `json` ou `xml` |
+| `--glossary` | arquivo de glossário em JSON ou CSV |
+| `--locale` | locale alvo para validação de glossário |
+| `--check-keys` | valida presença de chaves |
+| `--check-placeholders` | valida placeholders |
+| `--check-glossary` | valida cobertura do glossário |
 
 Exemplo com glossário:
 
 ```bash
-poliglota validate --root . --source pt_BR --format arb \
-  --glossary glossario.csv --check-glossary --locale en_US
+poliglota validate --root . --source pt_BR --format arb --glossary glossario.csv --check-glossary --locale en_US
 ```
 
-## Sincronizar chaves ausentes
+## 2. Sincronizar chaves ausentes
 
 Simular sem gravar:
 
@@ -40,146 +39,119 @@ Simular sem gravar:
 poliglota sync --root . --source pt_BR --dry-run --format arb
 ```
 
-Aplicar as alterações:
+Aplicar as mudanças:
 
 ```bash
 poliglota sync --root . --source pt_BR --format arb
 ```
 
-## Listar locales descobertos
+## 3. Listar locales descobertos
 
 ```bash
 poliglota list-locales --root . --format arb
 ```
 
-`--format` seleciona o **adaptador** de formato (`arb`, `yaml`, `json` ou `xml`); não é uma opção de saída JSON. Por exemplo, `--format json` lista arquivos JSON de localização.
+O argumento `--format` escolhe o adaptador de leitura (`arb`, `yaml`, `json`, `xml`); ele não é um formato de saída.
 
-## Traduzir texto
+## 4. Traduzir texto
 
-O texto é um argumento **posicional**. A opção `--text` não existe.
+O texto é passado como argumento posicional; a opção `--text` não existe no código atual.
 
 ```bash
 poliglota translate --source pt_BR --target en_US "Olá, mundo!"
 ```
 
-### Opções
+### Opções principais
 
 | Opção | Descrição |
-|---|---|
-| `--source` | Locale de origem (padrão: `pt_BR`) |
-| `--target` | Locale de destino (padrão: `en_US`) |
-| `--engine` | `marian` (padrão) ou `pytorch`; o padrão resolve `POLIGLOTA_ENGINE` |
-| `--model` | Modelo Hugging Face; se omitido, o motor padrão é auto-selecionado |
-| `--device` | `auto` (padrão), `cpu`, `cuda`, `mps` ou `gpu` |
-| `--preserve-placeholders` | Protege placeholders ARB antes e depois da tradução |
-| `--batch-size` | Tamanho do lote de inferência (padrão: 8) |
-| `--json-output` | Emite JSON em vez de texto puro |
+| --- | --- |
+| `--source` | locale de origem |
+| `--target` | locale de destino |
+| `--engine` | `marian` ou `pytorch` |
+| `--model` | modelo do Hugging Face; opcional |
+| `--device` | `auto`, `cpu`, `cuda`, `mps` ou `gpu` |
+| `--batch-size` | tamanho do lote de inferência |
+| `--json-output` | saída em JSON |
+| `--preserve-placeholders` | preserva placeholders antes/depois da tradução |
 
 Exemplos:
 
 ```bash
-# Escolha explícita de dispositivo
-poliglota translate --source pt_BR --target en_US --device cpu "Olá, mundo!"
-
-# Motor PyTorch com lote menor
+poliglota translate --source pt_BR --target en_US --device auto "Olá, mundo!"
 poliglota translate --source pt_BR --target en_US --engine pytorch --batch-size 4 "Olá, mundo!"
-
-# Modelo específico
-poliglota translate --source pt_BR --target en_US \
-  --model Helsinki-NLP/opus-mt-tc-big-en-pt "Olá, mundo!"
-
-# Preservação de placeholders e saída JSON
-poliglota translate --source pt_BR --target en_US \
-  --preserve-placeholders --json-output "Olá, {nome}!"
+poliglota translate --source pt_BR --target en_US --model facebook/nllb-200-distilled-600M "Olá, mundo!"
 ```
 
-### Seleção automática de modelo
+Se `--model` não for informado, a CLI tenta escolher um modelo padrão para o par de idiomas a partir do catálogo implementado. Pares não suportados falham com uma mensagem clara.
 
-Quando `--model` não é informado, o motor padrão é escolhido para o par de idiomas. A ordem é:
-
-1. `Helsinki-NLP/opus-mt-en-es`
-2. `Helsinki-NLP/opus-mt-en-fr`
-3. `Helsinki-NLP/opus-mt-tc-big-en-pt`
-
-O primeiro modelo cujo conjunto de idiomas contém **origem e destino** é usado. Na prática, a seleção automática cobre pares entre `en`, `es`, `fr` e `pt`; qualquer outro par falha com erro explícito e exige `--model` ou `POLIGLOTA_DEFAULT_MOTOR`.
-
-A variável `POLIGLOTA_DEFAULT_MOTOR` substitui completamente essa escolha:
+## 5. Traduzir um projeto
 
 ```bash
-export POLIGLOTA_DEFAULT_MOTOR="Helsinki-NLP/opus-mt-tc-big-en-pt"
+poliglota translate-project --root . --source pt_BR --target en_US --format json --output-dir .poliglota_translated
 ```
 
-No PowerShell:
+Esse comando percorre recursos de localização dentro da raiz do projeto e grava o resultado em um diretório de saída. Se `--output-dir` for omitido, o padrão é `.poliglota_translated` dentro da raiz.
 
-```powershell
-$env:POLIGLOTA_DEFAULT_MOTOR = "Helsinki-NLP/opus-mt-tc-big-en-pt"
+## 6. Preparar modelo para uso offline
+
+```bash
+poliglota prepare-model --model facebook/nllb-200-distilled-600M --device auto
 ```
 
-Em modo offline (`HF_HUB_OFFLINE=1`), apenas modelos já presentes no cache local são aceitos.
+Esse fluxo prepara o modelo e o tokenizer para uso local. O projeto não tenta baixar modelos automaticamente em cada tradução.
 
-## Cache de tradução (opcional)
+## 7. Comportamento offline
 
-O cache é desativado por padrão, vive apenas em memória e não persiste entre execuções:
+O projeto limita a execução local à disponibilidade do modelo em cache:
 
-Shells POSIX:
+```bash
+export HF_HUB_OFFLINE=1
+```
+
+Se o modelo não estiver em cache, o comando falha com erro explícito.
+
+## 8. Cache de tradução opcional
+
+O cache em memória pode ser habilitado manualmente por variáveis de ambiente:
+
+Shell POSIX:
 
 ```bash
 export POLIGLOTA_ENABLE_TRANSLATION_CACHE=1
 export POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES=256
 ```
 
-Windows PowerShell:
+PowerShell:
 
 ```powershell
 $env:POLIGLOTA_ENABLE_TRANSLATION_CACHE = "1"
 $env:POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES = "256"
 ```
 
-Windows CMD:
+Ele é desativado por padrão, não persiste entre execuções e não substitui a presença do modelo local.
 
-```bat
-set POLIGLOTA_ENABLE_TRANSLATION_CACHE=1
-set POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES=256
-```
-
-- Valores habilitados: `1`, `true`, `yes`, `on`.
-- O limite padrão é 256 entradas; valores inválidos ou menores que 1 geram aviso e voltam ao padrão.
-- O cache considera engine, dispositivo, tamanho de lote e preservação de placeholders na chave.
-
-## Comportamento offline
-
-A tradução local só é válida quando o modelo necessário já está no cache local ou em um diretório configurado. O projeto não baixa arquivos de modelo automaticamente durante a execução.
-
-```bash
-export HF_HUB_OFFLINE=1
-```
-
-Se o cache estiver ausente, o comando falha com erro explícito em vez de continuar silenciosamente.
-
-## Códigos de saída
+## 9. Códigos de saída
 
 | Código | Significado |
-|---|---|
-| `0` | Comando concluído com sucesso (inclui `validate` sem problemas e `sync --dry-run` sem alterações) |
-| `1` | Falha de validação, erro de argumento, recurso ausente ou erro de execução (por exemplo, modelo não disponível localmente) |
+| --- | --- |
+| `0` | sucesso |
+| `1` | erro de execução, argumento inválido ou ausência de recurso |
 
-Os códigos `0` e `1` são os únicos usados pela CLI. Em scripts, trate qualquer código diferente de `0` como falha.
-
-## Executar os testes
+## 10. Testes
 
 ```bash
 python -m pytest -q
 ```
 
-A suíte não usa rede nem baixa modelos. Testes que exigem PyTorch são marcados como `skipped` quando o extra `[gpu]` não está instalado.
+A suíte não usa rede e não baixa modelos automaticamente. Testes que dependem do extra `[gpu]` são controlados no projeto e podem aparecer como `skipped` quando a stack de ML não está disponível.
 
-## Fluxo típico
+## 11. Fluxo recomendado
 
 1. instalar o pacote e as ferramentas de desenvolvimento;
-2. validar a árvore de locales;
-3. simular a sincronização e revisar o resultado;
+2. validar a árvore de recursos;
+3. simular sincronização e revisar as diferenças;
 4. aplicar a sincronização;
-5. revisar traduções e o estado do cache de modelos;
-6. manter os artefatos de modelo fora do repositório Git.
+5. preparar o modelo local quando for usar tradução;
+6. executar a tradução em ambiente local com `HF_HUB_OFFLINE=1` quando a intenção for deferir para cache pronto.
 
-Para detalhes de motores e dispositivos, consulte `docs/guides/translation-engine.md` e `docs/guides/gpu-devices.md`.
+Para detalhes de motores e dispositivos, consulte [translation-engine.md](translation-engine.md) e [gpu-devices.md](gpu-devices.md).

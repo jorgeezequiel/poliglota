@@ -2,261 +2,261 @@
 
 [![CI](https://github.com/jorgeezequiel/poliglota/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jorgeezequiel/poliglota/actions/workflows/ci.yml)
 
-Poliglota é um pacote Python para validar, sincronizar e traduzir recursos de localização em múltiplos formatos de arquivo, sem acoplar a lógica de formato à aplicação.
+Poliglota é uma ferramenta leve para validar, sincronizar e traduzir recursos de localização sem acoplar o projeto a um único formato ou a um único fluxo de interface.
 
-Versão atual: **0.0.2** (pré-1.0, em desenvolvimento ativo).
+A proposta do projeto é simples e direta: descobrir arquivos de locale, validar chaves e placeholders, copiar entradas ausentes a partir de uma fonte de referência e, quando necessário, traduzir texto ou coleções de arquivos usando modelos locais preparados pelo usuário.
 
-## O que o projeto faz
+## Navegação rápida
 
-- Valida chaves e placeholders entre o locale de origem e os locales de destino.
-- Sincroniza chaves ausentes a partir do locale de origem, com modo de simulação.
-- Descobre locales em uma árvore de recursos.
-- Expõe adaptadores de formato para **ARB** (padrão), **JSON**, **YAML** e **XML**.
-- Oferece tradução local opcional por motores Marian ou PyTorch, sem downloads automáticos de modelos.
+- [Instalação](docs/guides/installation.md)
+- [Uso da CLI](docs/guides/usage.md)
+- [GUI desktop](docs/guides/gui.md)
+- [Formatos suportados](docs/supported-formats.md)
+- [Arquitetura](docs/architecture/overview.md)
+- [Limitações conhecidas](docs/LIMITATIONS.md)
 
-O projeto é intencionalmente conservador: pesos de modelo, tokenizers e caches ficam **fora do repositório** e são responsabilidade do usuário.
+## Visão geral
+
+O Poliglota hoje entrega funcionalidade confirmada em código e testes para:
+
+- validar recursos de localização contra um locale de origem
+- sincronizar chaves ausentes a partir do locale de referência
+- listar locales descobertos em uma árvore de projeto
+- traduzir texto individual com modelo local
+- traduzir um projeto completo para um ou mais destinos
+- preparar modelos locais para uso offline
+- operar por interface desktop guiada, sobre a mesma lógica da CLI
+
+O projeto é intencionalmente conservador:
+
+- não baixa modelos automaticamente durante o uso normal
+- exige que o modelo esteja disponível localmente no cache do usuário
+- não garante qualidade profissional de tradução em todos os pares e textos
+- trata a stack de ML como dependência opcional para a parte de tradução local
+
+## Formatos atualmente suportados
+
+Os formatos efetivamente registrados no runtime atual são:
+
+- ARB
+- JSON
+- YAML
+- XML
+
+CSV e gettext não têm adapter implementado no código atual. Para detalhes do estado real, consulte [docs/supported-formats.md](docs/supported-formats.md).
 
 ## Requisitos
 
-- Python **3.11 ou superior** (`requires-python = ">=3.11"`).
-- As dependências de runtime são `defusedxml` (leitura segura de XML) e `PyYAML` (adaptador YAML), instaladas automaticamente.
-- A tradução local exige o extra opcional `[gpu]` (PyTorch, Transformers e Hugging Face Hub).
+- Python 3.11+
+- dependências de runtime declaradas em `pyproject.toml`
+- tradução local exige a stack opcional de ML (`.[gpu]`)
 
-## Sistemas operacionais-alvo
-
-O projeto é desenvolvido no Windows 11 e declara suporte a **Windows**, **Linux** e **macOS**, sempre com Python 3.11+.
-
-O workflow de CI executa lint, verificação de versão e a suíte completa nesses três sistemas em Python 3.11, 3.12 e 3.13. A execução real está comprovada no GitHub Actions (badge acima), com os 10 jobs aprovados. A validação manual desta versão continua restrita ao Windows; Linux e macOS são cobertos pelo CI.
-
-## Instalação
-
-Pacote base:
+Instalação do pacote base:
 
 ```bash
 python -m pip install -e .
 ```
 
-Ferramentas de desenvolvimento (`pytest` e `ruff`):
+Ferramentas de desenvolvimento:
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-Stack opcional de tradução local:
+Stack opcional para tradução local:
 
 ```bash
 python -m pip install -e ".[gpu]"
 ```
 
-O extra `[gpu]` não baixa modelos nem inclui pesos no pacote. Consulte `docs/guides/installation.md` para instalação offline e detalhes de ambientes virtuais.
+Importante: esse extra inclui `torch`, `transformers`, `huggingface-hub` e `sacremoses`, mas não instala pesos de modelo automaticamente.
 
-## Uso da CLI
+## Primeiros passos
 
-Após a instalação, o entrypoint é `poliglota`:
+Verifique a ajuda da CLI:
 
 ```bash
 poliglota --help
 ```
 
-### Validar recursos
+Os comandos disponíveis no código atual são:
+
+- `interactive`
+- `guiado`
+- `gui`
+- `validate`
+- `sync`
+- `list-locales`
+- `translate`
+- `translate-project`
+- `prepare-model`
+
+## Validar recursos
 
 ```bash
 poliglota validate --root . --source pt_BR --format arb
 ```
 
-Opções adicionais: `--glossary` (JSON ou CSV), `--locale`, `--check-keys`, `--check-placeholders` e `--check-glossary`.
+Esse comando compara os arquivos do projeto contra o locale origem e valida chaves, placeholders e, quando aplicável, termos de glossário.
 
-### Sincronizar chaves ausentes
+## Sincronizar chaves ausentes
+
+Modo de simulação:
 
 ```bash
 poliglota sync --root . --source pt_BR --dry-run --format arb
 ```
 
-Remova `--dry-run` para gravar as alterações.
+Aplicar mudanças:
 
-### Listar locales descobertos
+```bash
+poliglota sync --root . --source pt_BR --format arb
+```
+
+## Listar locales descobertos
 
 ```bash
 poliglota list-locales --root . --format arb
 ```
 
-`--format` escolhe o adaptador (`arb`, `yaml`, `json`, `xml`), não o formato de saída.
+O argumento `--format` seleciona o adaptador (`arb`, `yaml`, `json`, `xml`); ele não é uma opção de saída.
 
-### Traduzir texto
+## Traduzir texto
 
-O texto é um argumento **posicional** (não existe `--text`):
+O texto é passado como argumento posicional:
 
 ```bash
 poliglota translate --source pt_BR --target en_US "Olá, mundo!"
 ```
 
-Opções disponíveis:
+Exemplos adicionais:
 
 ```bash
 poliglota translate --source pt_BR --target en_US --device auto "Olá, mundo!"
 poliglota translate --source pt_BR --target en_US --engine pytorch --batch-size 4 "Olá, mundo!"
-poliglota translate --source pt_BR --target en_US --preserve-placeholders --json-output "Olá, {nome}!"
+poliglota translate --source pt_BR --target en_US --model facebook/nllb-200-distilled-600M "Olá, mundo!"
 ```
 
-Se `--model` for omitido, o motor padrão é escolhido automaticamente para o par de idiomas. A ordem atual é `Helsinki-NLP/opus-mt-en-es`, `Helsinki-NLP/opus-mt-en-fr` e `Helsinki-NLP/opus-mt-tc-big-en-pt`; o primeiro cujo conjunto de idiomas contém origem **e** destino é usado. Na prática, a seleção automática cobre pares entre `en`, `es`, `fr` e `pt`; qualquer outro par falha com erro explícito e exige `--model` ou `POLIGLOTA_DEFAULT_MOTOR`. A variável `POLIGLOTA_DEFAULT_MOTOR` substitui completamente essa escolha.
+Se `--model` não for informado, o runtime tenta resolver um modelo padrão para o par de idiomas. Pares não cobertos pelo catálogo falham de forma explícita e exigem uma escolha manual.
 
-### Preparar modelo para uso offline
-
-Para baixar e cachear um modelo **antes** de usar tradução, utilize o comando `prepare-model`:
+## Traduzir um projeto inteiro
 
 ```bash
-poliglota prepare-model --model Helsinki-NLP/opus-mt-en-pt --device auto
+poliglota translate-project --root . --source pt_BR --target en_US --format json --output-dir .poliglota_translated
 ```
 
-Opções:
+Esse fluxo percorre arquivos de recursos em um diretório e escreve a saída em uma pasta de destino. Quando `--output-dir` não é informado, a pasta padrão é `.poliglota_translated` dentro da raiz do projeto.
+
+## Preparar modelo para uso offline
 
 ```bash
-poliglota prepare-model --model facebook/nllb-200-distilled-600M --device cuda
-poliglota prepare-model --model facebook/mbart-large-50-many-to-many-mmt --device cpu
+poliglota prepare-model --model facebook/nllb-200-distilled-600M --device auto
 ```
 
-O comando:
-- Baixa o modelo e tokenizer do Hugging Face Hub.
-- Cacheia os artefatos localmente em `$HF_HOME` (ou `~/.cache/huggingface` por padrão).
-- Valida a integridade do modelo (carrega config.json e verifica pesos).
-- Retorna código de saída 0 (sucesso) ou 1 (falha).
+Esse comando prepara o modelo e o tokenizer no cache local do Hugging Face. A ideia é deixar o ambiente pronto para execução offline sem depender de download automático em cada chamada.
 
-Após `prepare-model` completar com sucesso, o modelo fica disponível para tradução **sem acesso à rede**, mesmo com `HF_HUB_OFFLINE=1` definido.
+## GUI desktop
 
-## Tradução local, modelos e offline
-
-### Motores disponíveis
-
-Três motores de tradução estão disponíveis:
-
-- **`marian`** (padrão) — Modelo Marian NMT via Helsinki-NLP. Rápido, leve, suporta pares `en↔es`, `en↔fr`, `en↔pt`.
-- **`pytorch`** — Modelos PyTorch via Transformers/Hugging Face:
-  - **mBART** (`facebook/mbart-large-50-many-to-many-mmt`) — GPU (CUDA/MPS), suporta 50+ idiomas, incluindo PT-BR.
-  - **NLLB** (`facebook/nllb-200-distilled-600M`) — CPU/GPU, suporta 200 idiomas via ISO 639-3, inclui `en`, `pt`, `es`, `fr`, `de`, `it`, `ja`, `zh`, `ko`.
-
-A variável `POLIGLOTA_ENGINE` define o motor padrão (`marian` ou `pytorch`). Se omitida, o motor é escolhido automaticamente para o par de idiomas.
-
-### Processamento de corpus YAML
-
-Exemplo: tradução completa de corpus PazCall (6 arquivos YAML, 11 idiomas-alvo, ambos mBART GPU + NLLB CPU):
+A GUI também está disponível:
 
 ```bash
-# Script de exemplo (processamento bilíngue PT-BR → ES com ambos motores):
-python translate_pazcall_corpus.py
+poliglota gui
 ```
 
-**Resultado validado:**
-- ✓ mBART GPU: 44/58 strings traduzidas (PT-BR → ES-ES); non_translatable preservados (app_name, app_version, 11× language_name_*).
-- ✓ NLLB CPU: 44/58 strings traduzidas (PT-BR → ES); mesma estrutura, placeholders intactos.
-- ✓ Tempo total: 283.77s (GPU load + ambos motores).
-- ✓ UTF-8 + estrutura YAML validados.
-
-### Configuração e offline
-
-- Nenhum modelo é baixado automaticamente pelo repositório, pela instalação ou pela suíte de testes.
-- **Offline obrigatório:** Para uso offline, prepare o cache local **antes** da execução e defina `HF_HUB_OFFLINE=1`. Sem o modelo em cache e com `HF_HUB_OFFLINE=0` (padrão), o Hugging Face Hub será contactado. Sem o modelo em cache, o comando falha com mensagem explícita em vez de continuar silenciosamente.
-- O modo offline aceita apenas modelos já presentes no cache do Hugging Face (`HF_HOME` ou `~/.cache/huggingface`).
-- **Nota sobre `translate`:** O comando `translate` aceita **texto posicional** (não arquivos de recursos). Ele traduz texto único ou em lotes; para sincronizar e traduzir arquivos de localização, use `sync` + `validate` após preparar o modelo.
-
-### Dispositivos
-
-`--device` aceita `auto`, `cpu`, `cuda`, `mps` e `gpu`:
-
-- `auto` é permissivo e tenta CUDA > MPS > CPU.
-- Dispositivos explícitos são estritos e falham de forma clara quando indisponíveis.
-- A seleção de dispositivo depende do PyTorch instalado; qualquer uso de `translate` requer o extra `[gpu]`.
-
-## Cache de tradução (opcional)
-
-O cache de respostas é **desativado por padrão** e vive apenas em memória, por processo:
-
-Shells POSIX:
+ou:
 
 ```bash
-export POLIGLOTA_ENABLE_TRANSLATION_CACHE=1
-export POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES=256
+poliglota-gui
 ```
 
-Windows PowerShell:
+A GUI é uma camada visual sobre a mesma lógica da CLI. Ela é útil para usuários que preferem um formulário visual em vez de escrever comandos no terminal. Ainda assim, a CLI segue sendo a referência de comportamento e validação.
 
-```powershell
-$env:POLIGLOTA_ENABLE_TRANSLATION_CACHE = "1"
-$env:POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES = "256"
-```
+Detalhes do fluxo da interface estão em [docs/guides/gui.md](docs/guides/gui.md).
 
-Windows CMD:
+## Modelo local e execução offline
 
-```bat
-set POLIGLOTA_ENABLE_TRANSLATION_CACHE=1
-set POLIGLOTA_TRANSLATION_CACHE_MAX_ENTRIES=256
-```
+O comportamento real do código é este:
 
-Valores aceitos em `POLIGLOTA_ENABLE_TRANSLATION_CACHE`: `1`, `true`, `yes` ou `on`. O limite padrão é 256 entradas; valores inválidos ou menores que 1 geram aviso e voltam ao padrão. O cache é mantido apenas em RAM, fica desativado por padrão e não é persistido entre execuções. Ele reduz inferências repetidas ao custo de memória adicional e não substitui modelos locais nem constitui tradução remota.
+- não há download automático de modelos durante a execução normal
+- a tradução local depende de um modelo já disponível no cache do usuário
+- `HF_HUB_OFFLINE=1` força o modo offline estrito
+- pares ou dispositivos incompatíveis falham de forma clara em vez de cair silenciosamente em um backend não verificado
 
-O `RequestQueue` (`poliglota/engines/request_queue.py`) é um utilitário opcional de serialização de chamadas. Ele **não** está integrado ao caminho síncrono da CLI e não é necessário para o uso normal.
+Essa decisão mantém o comportamento previsível e transparente para o usuário.
 
-## Desenvolvimento e validação
+## Arquitetura em alto nível
+
+O projeto tem uma divisão clara entre camadas:
+
+- `poliglota/core` — contratos de formato e engine
+- `poliglota/formats` — adapters para ARB, JSON, YAML e XML
+- `poliglota/engines` — motores de tradução e cache opcional
+- `poliglota/quality` — placeholders, glossário e validação
+- `poliglota/cli.py` — interface da linha de comando
+- `poliglota/gui.py` e `poliglota/gui_app.py` — camada desktop
+
+Para uma visão mais detalhada, veja [docs/architecture/overview.md](docs/architecture/overview.md).
+
+## Desenvolvimento e testes
+
+Execute a suíte de testes:
 
 ```bash
 python -m pytest -q
-python -m ruff check poliglota tests
-python -m ruff format --check poliglota tests
 ```
 
-A suíte não usa rede e cobre CLI, contratos de formato, motores (com mocks), dispositivos e consistência de versão. Testes que exigem PyTorch são marcados como `skipped` quando a stack opcional não está instalada.
+A versão do projeto também é validada para manter consistência entre:
 
-O workflow `.github/workflows/ci.yml` executa, em **Windows, Ubuntu e macOS** com Python **3.11, 3.12 e 3.13**:
-
-1. lint e verificação de formatação com Ruff;
-2. consistência de versão entre `pyproject.toml`, `poliglota/__init__.py` e `VERSION`;
-3. suíte completa de testes, com relatório JUnit publicado como artefato.
-
-A stack de ML (PyTorch/Transformers) não é instalada no CI para evitar downloads pesados; por isso os testes que dependem dela aparecem como `skipped` nos relatórios.
-
-## Versionamento
-
-A versão oficial é declarada em `pyproject.toml` e espelhada em `poliglota/__init__.py` e no arquivo `VERSION`. O teste `tests/test_version_consistency.py` (executado também no CI) impede divergência entre essas fontes e os metadados da instalação.
+- `pyproject.toml`
+- `poliglota/__init__.py`
+- `VERSION`
 
 ## Estrutura do repositório
 
-```
+```text
 poliglota/
-├── poliglota/            # pacote
-│   ├── cli.py            # CLI (validate, sync, list-locales, translate, prepare-model)
-│   ├── config.py         # padrões usados pela CLI
-│   ├── gpu.py            # detecção/validação de dispositivo + cache de modelo
-│   ├── core/             # contratos independentes de formato e motor
-│   ├── formats/          # adaptadores ARB, JSON, YAML e XML + registry
-│   ├── engines/          # motores Marian/PyTorch, cache e RequestQueue
-│   └── quality/          # glossário, placeholders e validação
-├── tests/                # suíte pytest (sem rede)
-├── docs/                 # documentação pública
-│   ├── architecture/     # visão de arquitetura
-│   ├── development/      # testes e política de relatórios internos
-│   └── guides/           # instalação, uso, motores e GPU
-├── reports/              # relatórios internos (ignorados pelo Git)
-├── pyproject.toml        # metadados, dependências extras e configuração
-├── VERSION               # espelho da versão do pacote
-└── CHANGELOG.md
+├── poliglota/
+│   ├── cli.py
+│   ├── gui.py
+│   ├── gui_app.py
+│   ├── gui_view.py
+│   ├── core/
+│   ├── formats/
+│   ├── engines/
+│   ├── quality/
+│   └── ...
+├── docs/
+│   ├── architecture/
+│   ├── guides/
+│   ├── supported-formats.md
+│   ├── LIMITATIONS.md
+│   └── ...
+├── tests/
+├── pyproject.toml
+├── VERSION
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── LICENSE
+├── README.md
+├── ROADMAP.md
+└── scripts/
 ```
+
+## Limitações e status
+
+O Poliglota está em estado pré-1.0, mas com funcionalidade real. As principais limitações confirmadas no código são:
+
+- a tradução depende de um modelo compatível em cache local
+- suporte a GPU depende do ambiente local e do PyTorch instalado
+- alguns formatos usam adapters genéricos e não possuem validação específica tão rica quanto ARB
+- o projeto não inclui serviço de tradução em nuvem nem download automático de modelos
+
+A matriz completa de compatibilidade e restrições está em [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Contribuição
 
-Contribuições seguem as diretrizes de `CONTRIBUTING.md` (princípios não negociáveis, fluxo de desenvolvimento e política de versão/release). Alterações de comportamento exigem testes; o CI precisa passar nos três sistemas operacionais.
-
-## Documentação
-
-- `docs/guides/installation.md` — instalação e verificação do ambiente
-- `docs/guides/usage.md` — fluxos de uso da CLI
-- `docs/guides/translation-engine.md` — motores e configuração de modelos
-- `docs/guides/gpu-devices.md` — contrato de seleção de dispositivo
-- `docs/supported-formats.md` — matriz de suporte por formato
-- `docs/architecture/overview.md` — camadas e contratos
-- `docs/development/testing.md` — ambiente de testes e lint
-- `docs/LIMITATIONS.md` — limitações conhecidas e status pré-1.0
+Contribuições são bem-vindas, desde que sigam a política do projeto e as validações de comportamento. Consulte [CONTRIBUTING.md](CONTRIBUTING.md) para o fluxo de desenvolvimento e as regras de qualidade.
 
 ## Licença
 
-Distribuído sob a licença MIT. Consulte `LICENSE`.
-
-Artefatos de terceiros (modelos, tokenizers, pesos) permanecem regidos por suas próprias licenças e responsabilidades, fora deste repositório.
+Este projeto é distribuído sob a licença MIT. Veja [LICENSE](LICENSE).

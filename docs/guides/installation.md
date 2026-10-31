@@ -1,14 +1,14 @@
 # Instalação
 
-Poliglota requer **Python 3.11 ou superior**. O ambiente de referência usado na validação local é Python 3.13 no Windows.
+Poliglota requer Python 3.11 ou superior. O ambiente de referência usado na validação local foi Python 3.13 no Windows, mas o pacote declara suporte para 3.11+.
 
-## 1. Criar o ambiente virtual
+## 1. Criar um ambiente virtual
 
-Windows (PowerShell), selecionando o interpretador com o launcher `py`:
+Windows (PowerShell):
 
 ```powershell
 py -3.13 -m venv .venv
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 ```
 
 Linux/macOS:
@@ -18,60 +18,35 @@ python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-Ajuste a versão (`-3.13`) para qualquer interpretador dentro da faixa suportada.
+Ajuste a versão da linguagem para qualquer intérprete que esteja dentro da faixa suportada.
 
 ## 2. Instalar o pacote
 
-### Pacote base (runtime)
+### Runtime base
 
 ```bash
 python -m pip install -e .
 ```
 
-Instala as dependências de runtime `defusedxml` e `PyYAML` e expõe o entrypoint `poliglota`.
+Esse passo instala as dependências do runtime e expõe o entrypoint `poliglota`.
 
-### Com ferramentas de desenvolvimento
+### Ferramentas de desenvolvimento
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-Inclui `pytest` e `ruff`, usados pelo workflow de CI.
+Esse extra inclui `pytest` e `ruff`, usados pelo workflow do repositório.
 
-### Stack opcional de tradução local
+### Stack opcional para tradução local
 
 ```bash
 python -m pip install -e ".[gpu]"
 ```
 
-Inclui PyTorch, Transformers, Hugging Face Hub e sacremoses. É opcional e não altera a versão do pacote. Pesos, tokenizers e caches permanecem fora do repositório e precisam ser preparados localmente.
+Esse extra inclui `torch`, `transformers`, `huggingface-hub` e `sacremoses`. Ele é opcional e não instala modelos ou pesos de tradução automaticamente.
 
-### Windows + CUDA: instalação quebrada do PyTorch
-
-Se o ambiente tiver uma instalação corrompida do PyTorch (por exemplo, erro de DLL do CUDA/cuDNN como `cudnn_adv64_9.dll` ou a importação falhar com `OSError: [WinError 126]`), primeiro remova a instalação problemática do ambiente e recrie um virtualenv limpo antes de reinstalar a stack opcional.
-
-```powershell
-py -3.13 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install --index-url https://download.pytorch.org/whl/cu126 "torch==2.7.1+cu126" "torchaudio==2.7.1+cu126" "torchvision==0.22.1+cu126"
-python -m pip install "transformers==5.20.2" "huggingface-hub>=1.31.0,<3" "tokenizers==0.23.3" "sacremoses==0.1.0"
-python -m pip install -e ".[dev,gpu]"
-```
-
-Essa sequência evita depender de um ambiente Python global já corrompido. O projeto mantém o extra `[gpu]` opcional, mas a instalação real do PyTorch precisa seguir a combinação compatível do runtime e da GPU disponível no Windows.
-
-### Instalação sem rede
-
-Com `setuptools>=77` e `wheel` já disponíveis no ambiente:
-
-```bash
-python -m pip install -e . --no-build-isolation --no-index
-```
-
-Em ambientes virtuais novos criados com Python 3.12+ apenas o `pip` vem instalado; nesse caso a instalação offline falha até que `setuptools` e `wheel` estejam presentes.
-
-## 3. Verificar o ambiente
+## 3. Verificar a instalação
 
 ```bash
 python --version
@@ -79,11 +54,13 @@ poliglota --help
 python -c "import poliglota; print(poliglota.__version__)"
 ```
 
-A versão atual do pacote é `0.0.2`.
+A versão atual declarada no projeto é `0.0.2`.
 
-## 4. Preparar modelos (opcional)
+## 4. Preparar modelos para uso local
 
-A tradução local só funciona com um modelo compatível já disponível no cache. O projeto **não baixa modelos automaticamente**. Para uso estritamente offline:
+A tradução local depende de um modelo compatível já disponível no cache do usuário. O projeto não faz download automático em fluxo normal.
+
+Para reforçar a execução offline:
 
 ```bash
 export HF_HUB_OFFLINE=1
@@ -95,13 +72,23 @@ No PowerShell:
 $env:HF_HUB_OFFLINE = "1"
 ```
 
-Sem o modelo em cache, o comando falha com mensagem explícita.
+Se o modelo não estiver em cache, o comando falha de forma explícita.
+
+### Preparar um modelo específico
+
+```bash
+poliglota prepare-model --model facebook/nllb-200-distilled-600M --device auto
+```
+
+A ideia do comando é baixar ou preparar o recurso no cache do Hugging Face antes da tradução sem depender de um processo automático durante a execução diária.
 
 ## 5. Problemas comuns
 
-### `poliglota: command not found` / `'poliglota' não é reconhecido`
+### `poliglota: command not found`
 
-O entrypoint é instalado pelo `pip`. Confirme que o ambiente virtual está ativado e que a instalação foi feita com `python -m pip install -e .`. Alternativa sem entrypoint:
+Confirme que o ambiente virtual está ativo e que o pacote foi instalado com `python -m pip install -e .`.
+
+Alternativa direta:
 
 ```bash
 python -m poliglota.cli --help
@@ -109,38 +96,39 @@ python -m poliglota.cli --help
 
 ### `ModuleNotFoundError: No module named 'torch'`
 
-O comando `translate` exige o extra `[gpu]`. Instale-o no mesmo interpretador usado para executar a CLI:
+O comando `translate` exige o extra `[gpu]` no mesmo ambiente em que a CLI está sendo executada.
 
 ```bash
 python -m pip install -e ".[gpu]"
 ```
 
-Comandos de validação, sincronização e descoberta **não** precisam de PyTorch.
+Comandos de validação, sincronização e descoberta não dependem de PyTorch.
 
 ### Modelo não disponível localmente
 
-A mensagem indica que o modelo não está no cache local. Prepare o cache do Hugging Face (`HF_HOME`) ou informe `--model` apontando para um modelo já disponível. O projeto não baixa modelos automaticamente; com `HF_HUB_OFFLINE=1`, qualquer tentativa de download falha.
+A mensagem indica que a biblioteca não encontrou o modelo requisitado no cache local. Esse é um cenário esperado em ambientes offline: o modelo precisa estar preparado antes da execução.
 
-### `ruff` ou `pytest` ausentes
+### Instalação offline em ambiente virtual novo
 
-As ferramentas de desenvolvimento vêm do extra `[dev]`:
-
-```bash
-python -m pip install -e ".[dev]"
-```
-
-Sem esse extra, lint e testes não podem ser executados; isso é uma limitação de ambiente, não um resultado de qualidade.
-
-### Instalação offline falha em ambiente virtual novo
-
-Ambientes criados com Python 3.12+ trazem apenas `pip`. Instale `setuptools>=77` e `wheel` a partir de uma fonte local antes de repetir `--no-build-isolation --no-index`.
+Ambientes virtuais recém-criados com Python 3.12+ podem vir apenas com `pip` instalado. Nesses casos, instale `setuptools>=77` e `wheel` a partir de uma fonte local antes de repetir a instalação em modo offline.
 
 ### Divergência de versão
 
-Se `python -c "import poliglota; print(poliglota.__version__)"` não retornar `0.0.2`, reinstale o pacote em modo editável. O teste `tests/test_version_consistency.py` detecta divergências entre `pyproject.toml`, `poliglota/__init__.py`, `VERSION` e os metadados instalados.
+Se `python -c "import poliglota; print(poliglota.__version__)"` não retornar `0.0.2`, reinstale o pacote em modo editável. O projeto valida a consistência da versão em `pyproject.toml`, `poliglota/__init__.py` e `VERSION`.
 
-## Observações
+## 6. Observações importantes
 
 - O CI executa Windows, Ubuntu e macOS com Python 3.11, 3.12 e 3.13.
-- A stack de ML não é instalada no CI; testes que dependem dela são reportados como `skipped`.
-- Consulte `docs/guides/usage.md` para os comandos da CLI.
+- A stack de ML não é instalada automaticamente no CI; testes que dependem dela podem aparecer como `skipped`.
+- Consulte também [docs/guides/usage.md](usage.md) e [docs/guides/gui.md](gui.md) para os fluxos reais da CLI e da interface desktop.
+
+## 7. Compatibilidade do ambiente
+
+A tradução local é um recurso opcional e dependente do ambiente do usuário. Em uso real, o projeto exige:
+
+- Python 3.11+
+- `torch` compatível com o runtime
+- `transformers` compatível com o modelo escolhido
+- cache local do modelo pronto antes da execução
+
+O Poliglota não promete que qualquer par de idioma ou qualquer dispositivo funcione automaticamente em toda máquina. O comportamento real depende do hardware e do modelo disponível.
