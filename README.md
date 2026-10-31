@@ -19,6 +19,14 @@ A proposta do projeto é simples e direta: descobrir arquivos de locale, validar
 - [Arquitetura](docs/architecture/overview.md)
 - [Limitações conhecidas](docs/LIMITATIONS.md)
 
+## Releases e versionamento
+
+O projeto usa SemVer para metadados e versionamento do pacote, com a versão oficial declarada em `pyproject.toml`, refletida em `poliglota/__init__.py` e em `VERSION`.
+
+As futuras releases do GitHub serão disparadas por tags no formato `vX.Y.Z`. Quando a tag for criada, o workflow em `.github/workflows/release.yml` valida a consistência da versão, roda a qualidade e os testes, constrói os artefatos Python (`.whl` e `.tar.gz`) e gera um rascunho de Release (`draft`) com as notas automáticas da configuração em `.github/release.yml`.
+
+A publicação final continua sendo uma decisão manual do mantenedor após revisão do rascunho e dos artefatos anexados.
+
 ## Visão geral
 
 O Poliglota hoje entrega funcionalidade confirmada em código e testes para:

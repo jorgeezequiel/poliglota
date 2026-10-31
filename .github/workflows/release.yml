@@ -1,0 +1,218 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  validate-version:
+    name: Validate tag and package version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Validate tag against project metadata
+        id: version
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${TAG_NAME}" != v* ]]; then
+            echo "Tag '${TAG_NAME}' is not in the expected format vX.Y.Z."
+            exit 1
+          fi
+
+          TAG_VERSION="${TAG_NAME#v}"
+
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          import tomllib
+
+          repo_root = Path('.')
+          pyproject = tomllib.loads((repo_root / 'pyproject.toml').read_text(encoding='utf-8'))
+          pyproject_version = pyproject['project']['version']
+          version_file = (repo_root / 'VERSION').read_text(encoding='utf-8').strip()
+          init_text = (repo_root / 'poliglota' / '__init__.py').read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_text)
+          if match is None:
+              raise SystemExit("Unable to parse __version__ from poliglota/__init__.py")
+          init_version = match.group(1)
+          tag_version = os.environ['TAG_NAME'][1:]
+
+          expected = {pyproject_version, version_file, init_version}
+          if len(expected) != 1:
+              raise SystemExit(
+                  'Version mismatch detected: '
+                  f'pyproject={pyproject_version}, VERSION={version_file}, __version__={init_version}'
+              )
+          if pyproject_version != tag_version:
+              raise SystemExit(
+                  'Tag and package versions do not match: '
+                  f'tag={tag_version}, pyproject={pyproject_version}'
+              )
+
+          print(f'Validated release version {tag_version}')
+          PY
+
+          echo "version=${TAG_VERSION}" >> "${GITHUB_OUTPUT}"
+
+  quality:
+    name: Release quality checks (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: validate-version
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install development dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: python -m ruff check poliglota tests
+
+      - name: Ruff format check
+        run: python -m ruff format --check poliglota tests
+
+      - name: Version consistency check
+        run: python -m pytest tests/test_version_consistency.py -q
+
+      - name: Smoke test suite (CPU only)
+        run: python -m pytest -q -m "not gpu" --ignore=tests/test_version_consistency.py
+
+  build:
+    name: Build Python distribution artifacts
+    needs: validate-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Configure Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade build
+
+      - name: Build wheel and source distribution
+        run: python -m build --sdist --wheel --outdir dist
+
+      - name: Validate distribution artifacts
+        shell: python
+        run: |
+          import tomllib
+          from pathlib import Path
+
+          dist = Path('dist')
+          wheels = sorted(dist.glob('*.whl'))
+          sdists = sorted(dist.glob('*.tar.gz'))
+          assert len(wheels) == 1, wheels
+          assert len(sdists) == 1, sdists
+
+          pyproject = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))
+          version = pyproject['project']['version']
+
+          wheel = wheels[0]
+          sdist = sdists[0]
+          assert wheel.exists() and sdist.exists(), (wheel, sdist)
+          assert version in wheel.name, (version, wheel.name)
+          assert version in sdist.name, (version, sdist.name)
+          print(f'Built {wheel.name} and {sdist.name}')
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  draft-release:
+    name: Draft GitHub Release from tag
+    needs: [validate-version, quality, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Create draft release when absent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "A draft or published release already exists for ${TAG_NAME}. Skipping creation."
+            exit 0
+          fi
+
+          ls -l dist
+
+          gh release create "${TAG_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft \
+            --generate-notes \
+            --title "${TAG_NAME#v}" \
+            dist/*.whl \
+            dist/*.tar.gz

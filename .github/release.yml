@@ -1,0 +1,35 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-for-release
+      - dependencies
+    authors:
+      - dependabot[bot]
+      - github-actions[bot]
+  categories:
+    - title: "🚀 Novos recursos"
+      labels:
+        - enhancement
+        - feature
+        - feat
+    - title: "✨ Melhorias"
+      labels:
+        - improvement
+        - optimization
+    - title: "🛠️ Correções"
+      labels:
+        - bug
+        - fix
+        - regression
+    - title: "📚 Documentação"
+      labels:
+        - documentation
+        - docs
+    - title: "🔧 Manutenção"
+      labels:
+        - maintenance
+        - chore
+        - refactor
+    - title: "Outras alterações"
+      labels:
+        - "*"
