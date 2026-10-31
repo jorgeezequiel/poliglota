@@ -71,4 +71,30 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ## [Não lançado]
 
-- Sem mudanças pendentes no momento.
+### Adicionado
+
+- **Persistência do formulário da GUI**: pasta do projeto, formato, locales, motor, dispositivo, modelo e `dry-run` são restaurados na sessão seguinte. O estado é gravado em `%APPDATA%\poliglota\gui_state.json` (Windows), `~/Library/Application Support/poliglota/gui_state.json` (macOS) ou `$XDG_CONFIG_HOME/poliglota/gui_state.json` (Linux), com autosave de 600 ms e gravação imediata ao fechar a janela.
+- Novas opções `--state-file` e variável de ambiente `POLIGLOTA_GUI_STATE_FILE` para escolher outro arquivo de estado.
+- **Validação em tempo real na GUI**: linha de status abaixo do formulário com `✓ Configuração válida.` ou `✗ <Campo>: <motivo>`, foco automático no primeiro campo inválido e bloqueio do comando enquanto houver pendência. Cobre pasta do projeto, locales de origem/destino, nome do modelo e texto de tradução.
+- **Erros acionáveis na GUI**: falhas da CLI passam a ser classificadas em categorias com título em linguagem simples, sugestão de próximo passo e detalhes técnicos preservados.
+- Log rotativo da GUI em `gui.log` (1 MB, 3 backups), na mesma pasta do arquivo de estado, criado apenas ao abrir a janela.
+- Testes unitários para persistência (`tests/test_gui_config.py`), validadores (`tests/test_gui_validators.py`) e categorização de erros (`tests/test_gui_errors.py`), além de testes de integração da GUI.
+- **Destaque visual de campos inválidos na GUI**: entradas com problema recebem o estilo `Invalid.TEntry` e voltam ao normal assim que o valor fica válido.
+- **Atalhos de teclado na GUI**: `Enter` e `F5` validam, `Ctrl+O` abre o seletor de pasta e `Esc` cancela a operação em andamento.
+- **Botão `Cancelar`** para encerrar comandos longos, com mensagem explícita na saída.
+- **Progresso e streaming na GUI**: barra indeterminada durante a execução e saída da CLI exibida linha a linha (stdout e stderr mesclados em UTF-8), em vez de esperar o término do processo.
+- **Tema claro/escuro** na GUI, aplicado em tempo real e lembrado entre sessões.
+- **Geometria da janela lembrada** entre sessões, com normalização de tamanho e posição para nunca reabrir fora da tela.
+- Testes da camada de apresentação em `tests/test_gui_view.py` (temas, geometria, destaque de campos, progresso e atalhos) e novos casos de streaming/cancelamento em `tests/test_gui_app.py`.
+
+### Alterado
+
+- A GUI foi separada em apresentação (`poliglota/gui_view.py`) e comportamento (`poliglota/gui_app.py`), mantendo a CLI como fonte de verdade.
+- Ao reabilitar o formulário após um comando, os comboboxes voltam ao estado `readonly` em vez de ficarem editáveis.
+- Comandos da GUI passaram a ter leitura incremental com limite de 300 segundos, encerrando processos travados com mensagem de tempo limite.
+
+### Corrigido
+
+- O comando `translate` da CLI voltou a usar o dispatcher canônico, evitando `TypeError` na execução do subcomando.
+- Formatação e lint de `_run_translate_project` (espaços em linhas vazias, f-string sem placeholders, seção de docstring).
+

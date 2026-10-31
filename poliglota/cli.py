@@ -442,6 +442,66 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Output JSON instead of plain text",
     )
+    translate_project_parser = subparsers.add_parser(
+        "translate-project",
+        help="translate all resource files in a project to target locale(s)",
+    )
+    translate_project_parser.add_argument(
+        "--root",
+        type=Path,
+        default=DEFAULT_ROOT,
+        help="project root to scan for resource files",
+    )
+    translate_project_parser.add_argument(
+        "--source",
+        default=DEFAULT_SOURCE_LOCALE,
+        help="source locale (e.g. pt_BR)",
+    )
+    translate_project_parser.add_argument(
+        "--target",
+        required=True,
+        help="target locale(s) comma-separated (e.g. en_US,es_ES)",
+    )
+    translate_project_parser.add_argument(
+        "--engine",
+        default=os.environ.get("POLIGLOTA_ENGINE", "marian"),
+        help="translation engine (marian or pytorch; default resolves POLIGLOTA_ENGINE)",
+    )
+    translate_project_parser.add_argument(
+        "--model",
+        default=None,
+        help="HuggingFace model name; if omitted, auto-selected",
+    )
+    translate_project_parser.add_argument(
+        "--device",
+        default="auto",
+        help="device to run inference on (auto, cpu, cuda, mps, gpu)",
+    )
+    translate_project_parser.add_argument(
+        "--format",
+        default="arb",
+        choices=["arb", "yaml", "json", "xml"],
+        help="localization format (default: arb)",
+    )
+    translate_project_parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="output directory for translated files (default: .poliglota_translated)",
+    )
+    translate_project_parser.add_argument(
+        "--preserve-placeholders",
+        action="store_true",
+        default=True,
+        help="preserve ARB placeholders (enabled by default)",
+    )
+    translate_project_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="batch size for inference",
+    )
+    translate_project_parser.set_defaults(func=_run_translate_project)
 
     prepare_model_parser = subparsers.add_parser(
         "prepare-model",
@@ -1167,6 +1227,70 @@ def _run_translate(
 
     print(translated)
     return 0
+
+
+def _run_translate_project(args: argparse.Namespace) -> int:
+    """Translate all resource files in a project to target locale(s).
+
+    Args:
+        args: Parsed command-line arguments
+
+    Returns:
+        Exit code (0 on success, 1 on error)
+
+    """
+    from poliglota.translation_workflow import translate_resource_files
+
+    normalized_engine = (args.engine or "marian").strip().lower()
+    if normalized_engine not in {"marian", "pytorch"}:
+        print(f"Error: Unsupported engine '{args.engine}'. Use one of: marian, pytorch.")
+        return 1
+
+    try:
+        resolved_device = _resolve_device_name(args.device)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    # Parse target locales (comma-separated)
+    target_locales = [t.strip() for t in args.target.split(",")]
+    if not target_locales:
+        print("Error: at least one target locale required")
+        return 1
+
+    try:
+        report = translate_resource_files(
+            root=args.root,
+            source_locale=args.source,
+            target_locales=target_locales,
+            format_name=args.format,
+            output_dir=args.output_dir,
+            engine=normalized_engine,
+            model=args.model,
+            device=resolved_device,
+            batch_size=args.batch_size,
+            preserve_placeholders=args.preserve_placeholders,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 1
+
+    # Print summary
+    print("Translation Report:")
+    print(f"  Files processed: {report.processed}")
+    print(f"  Files translated: {report.translated}")
+    print(f"  Files skipped: {report.skipped}")
+    print(f"  Files failed: {report.failed}")
+
+    if report.details and report.failed > 0:
+        print("\nFailure details:")
+        for detail in report.details:
+            print(f"  - {detail.get('file', 'unknown')}: {detail.get('error', 'unknown error')}")
+
+    if args.output_dir:
+        print(f"\nTranslated files saved to: {args.output_dir}")
+
+    return 0 if report.failed == 0 else 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
