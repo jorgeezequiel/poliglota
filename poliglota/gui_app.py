@@ -894,8 +894,8 @@ class PoliglotaGUI:
         return GuiState(
             project_root=project_root,
             format=self._var_value(self.format_var) or "arb",
-            source_locale=self._var_value(self.source_var) or "pt_BR",
-            target_locale=self._var_value(self.target_var) or "en_US",
+            source_locale=self._var_value(self.source_var) or "",
+            target_locale=self._var_value(self.target_var) or "",
             engine=self._var_value(self.engine_var) or "marian",
             device=self._var_value(self.device_var) or "auto",
             model_name=self._var_value(self.model_var),
@@ -1162,8 +1162,8 @@ class PoliglotaGUI:
             msg = "Informe o texto para tradução."
             raise ValueError(msg)
 
-        source_value = self.source_var.get().strip() if self.source_var is not None else "pt_BR"
-        target_value = self.target_var.get().strip() if self.target_var is not None else "en_US"
+        source_value = self.source_var.get().strip() if self.source_var is not None else ""
+        target_value = self.target_var.get().strip() if self.target_var is not None else ""
         engine_value = self.engine_var.get().strip() if self.engine_var is not None else "marian"
         device_value = self.device_var.get().strip() if self.device_var is not None else "auto"
         model_value = self.model_var.get().strip() if self.model_var is not None else ""
@@ -1191,7 +1191,7 @@ class PoliglotaGUI:
 
     def _build_sync_command(self) -> list[str]:
         root_value = self._build_project_root()
-        source_value = self.source_var.get().strip() if self.source_var is not None else "pt_BR"
+        source_value = self.source_var.get().strip() if self.source_var is not None else ""
         format_value = self.format_var.get() if self.format_var is not None else "arb"
         dry_run = self.sync_dry_run_var.get() if self.sync_dry_run_var is not None else True
 
@@ -1252,7 +1252,7 @@ class PoliglotaGUI:
             return
         root_value = self.project_root if self.project_var is None else self._build_project_root()
         format_value = self.format_var.get() if self.format_var is not None else "arb"
-        source_value = self.source_var.get().strip() if self.source_var is not None else "pt_BR"
+        source_value = self.source_var.get().strip() if self.source_var is not None else ""
         command = [
             "validate",
             "--root",
@@ -1321,7 +1321,7 @@ class PoliglotaGUI:
 
     def _build_translate_project_command(self) -> list[str]:
         root_value = self._build_project_root()
-        source_value = self.source_var.get().strip() if self.source_var is not None else "pt_BR"
+        source_value = self.source_var.get().strip() if self.source_var is not None else ""
         target_value = self._serialize_target_locales()
         targets = [item.strip() for item in target_value.split(",") if item.strip()]
         engine_value = self.engine_var.get().strip() if self.engine_var is not None else "marian"
@@ -1359,12 +1359,12 @@ class PoliglotaGUI:
 
     def _serialize_target_locales(self) -> str:
         """Serialize the GUI target selector into the CLI-compatible comma syntax."""
-        raw = self.target_var.get().strip() if self.target_var is not None else "en_US"
+        raw = self.target_var.get().strip() if self.target_var is not None else ""
         if not raw:
-            return "en_US"
+            return ""
         if "," in raw:
             values = [part.strip() for part in raw.split(",") if part.strip()]
-            return ",".join(values) if values else "en_US"
+            return ",".join(values) if values else ""
         return raw
 
     def _handle_translate_project(self) -> None:

@@ -854,8 +854,8 @@ def test_gui_restore_defaults_keeps_the_current_theme(tmp_path: Path) -> None:
 
     assert app.project_var.get() == str(tmp_path)
     assert app.format_var.get() == "arb"
-    assert app.source_var.get() == "pt_BR"
-    assert app.target_var.get() == "en_US"
+    assert app.source_var.get() == ""
+    assert app.target_var.get() == ""
     assert app.engine_var.get() == "marian"
     assert app.device_var.get() == "auto"
     assert app.model_var.get() == ""

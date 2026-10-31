@@ -125,6 +125,10 @@ def run_interactive() -> int:
         device = devices[dev_idx]
         resolved = cli.resolve_device_name(device)
         if device != "auto" and resolved == "cpu" and device in {"cuda", "mps"}:
+            print(
+                f"Erro: o dispositivo '{device}' não está disponível neste ambiente. "
+                "A execução continuará com CPU ou escolha outra opção."
+            )
             return 1
 
         registry = get_global_registry()
@@ -139,11 +143,29 @@ def run_interactive() -> int:
         root_str = _prompt_input("Caminho da pasta com arquivos de localização", default=".")
         root = Path(root_str)
         if not root.exists():
+            print(f"Erro: o caminho '{root}' não existe. Verifique a pasta informada.")
+            return 1
+        if root.is_file():
+            print(
+                f"Erro: o caminho '{root}' aponta para um arquivo, mas a operação espera uma pasta "
+                "com recursos de localização."
+            )
             return 1
 
         adapter = registry.get(format_name)
         by_locale = discover_resources(adapter, root)
         if not by_locale:
+            if any(root.rglob(f"*.{format_name}")):
+                print(
+                    f"Nenhum locale foi reconhecido em '{root}' para o formato '{format_name}'. "
+                    "Verifique a estrutura esperada: arquivos nomeados como 'pt_BR.yaml', "
+                    "'<module>_pt_BR.yaml' ou pastas por locale."
+                )
+            else:
+                print(
+                    f"Nenhum arquivo '{format_name}' foi encontrado em '{root}'. "
+                    f"Verifique o caminho informado e o formato selecionado ({format_name})."
+                )
             return 1
 
         locales_list = sorted(by_locale.keys())
@@ -157,6 +179,7 @@ def run_interactive() -> int:
             if _prompt_yes_no(f"Traduzir para {loc}?"):
                 target_locales.append(loc)
         if not target_locales:
+            print("Nenhum idioma de destino selecionado. É necessário escolher pelo menos um destino.")
             return 1
 
         default_model = cli.select_default_motor(source_locale, target_locales[0])
@@ -175,9 +198,10 @@ def run_interactive() -> int:
 
         is_cached = gpu.check_model_cached(model)
         if not is_cached:
-            print(f"Modelo {model} não encontrado ou incompleto no cache local.")  # noqa: T201
-            print("Nenhum download será iniciado sem consentimento explícito.")  # noqa: T201
+            print(f"Modelo {model} não encontrado ou incompleto no cache local.")
+            print("Nenhum download será iniciado sem consentimento explícito.")
             if not _prompt_yes_no(f"Baixar e preparar o modelo {model}?", default=False):
+                print("Operação cancelada pelo usuário. Nenhum download foi realizado.")
                 return 0
             try:
                 import importlib
@@ -187,19 +211,20 @@ def run_interactive() -> int:
                 model_obj = transformers.AutoModelForSeq2SeqLM.from_pretrained(model)
                 del tokenizer, model_obj
                 if not gpu.check_model_cached(model):
-                    print(f"Erro: o modelo {model} não ficou pronto localmente para uso.")  # noqa: T201
+                    print(f"Erro: o modelo {model} não ficou pronto localmente para uso.")
                     return 1
             except ImportError:
-                print("Erro: depende de 'transformers' para baixar o modelo localmente.")  # noqa: T201
+                print("Erro: depende de 'transformers' para baixar o modelo localmente.")
                 return 1
             except Exception as exc:  # pragma: no cover - defensive, requested graceful exit  # noqa: BLE001
-                print(f"Erro ao baixar/preparar o modelo {model}: {exc}")  # noqa: T201
+                print(f"Erro ao baixar/preparar o modelo {model}: {exc}")
                 return 1
 
         if not _prompt_yes_no("Iniciar tradução?", default=False):
+            print("Tradução cancelada pelo usuário.")
             return 0
 
-        translate_resource_files(
+        report = translate_resource_files(
             root=root,
             source_locale=source_locale,
             target_locales=target_locales,
@@ -210,9 +235,42 @@ def run_interactive() -> int:
             batch_size=8,
             preserve_placeholders=True,
         )
+        processed = getattr(report, "processed", 0)
+        translated = getattr(report, "translated", 0)
+        skipped = getattr(report, "skipped", 0)
+        failed = getattr(report, "failed", 0)
+        details = getattr(report, "details", []) or []
+        if not isinstance(processed, int):
+            processed = 0
+        if not isinstance(translated, int):
+            translated = 0
+        if not isinstance(skipped, int):
+            skipped = 0
+        if not isinstance(failed, int):
+            failed = 0
+        if not isinstance(details, list):
+            details = []
+        print("Resumo da execução:")
+        print(f"  Idiomas encontrados: {', '.join(locales_list)}")
+        print(f"  Origem: {source_locale}")
+        print(f"  Destinos: {', '.join(target_locales)}")
+        print(f"  Arquivos processados: {processed}")
+        print(f"  Traduções realizadas: {translated}")
+        print(f"  Itens ignorados: {skipped}")
+        print(f"  Falhas: {failed}")
+        if details and failed > 0:
+            print("  Detalhes de falha:")
+            for detail in details[:10]:
+                print(
+                    f"    - {detail.get('file', 'arquivo desconhecido')}: "
+                    f"{detail.get('error', 'erro desconhecido')}"
+                )
+        print(f"Arquivos gerados em: {output_dir}")
     except InteractiveCancelledError:
+        print("Operação cancelada pelo usuário.")
         return 0
-    except (RuntimeError, ValueError, OSError, TypeError):
+    except (RuntimeError, ValueError, OSError, TypeError) as exc:
+        print(f"Erro: {exc}")
         return 1
     else:
         return 0

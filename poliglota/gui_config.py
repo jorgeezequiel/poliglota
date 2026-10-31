@@ -109,8 +109,8 @@ class GuiState:
 
     project_root: str = ""
     format: str = "arb"
-    source_locale: str = "pt_BR"
-    target_locale: str = "en_US"
+    source_locale: str = ""
+    target_locale: str = ""
     engine: str = "marian"
     device: str = "auto"
     model_name: str = ""
@@ -170,8 +170,8 @@ class Preset:
     name: str
     project_root: str = ""
     format: str = "arb"
-    source_locale: str = "pt_BR"
-    target_locale: str = "en_US"
+    source_locale: str = ""
+    target_locale: str = ""
     engine: str = "marian"
     device: str = "auto"
     model_name: str = ""
