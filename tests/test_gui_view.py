@@ -109,6 +109,7 @@ def _actions(calls: list[str]) -> GuiActions:
         translate=record("translate"),
         translate_project=record("translate_project"),
         choose_project=record("choose_project"),
+        project_history_selected=record("project_history_selected"),
         cancel=record("cancel"),
         restore_defaults=record("restore_defaults"),
         copy_output=record("copy_output"),

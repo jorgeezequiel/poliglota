@@ -801,7 +801,20 @@ class PoliglotaGUI:
         recent = [item for item in self.recent_projects if item != cleaned]
         recent.insert(0, cleaned)
         self.recent_projects = recent[:RECENT_PROJECTS_LIMIT]
+        if self.project_var is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                self.project_var.set(cleaned)
         self.view.set_recent_projects(self.recent_projects)
+
+    def _apply_recent_project_selection(self) -> None:
+        """Apply the currently selected item from the recent-project dropdown."""
+        if self.project_var is None:
+            return
+        selected = self._var_value(self.project_var).strip()
+        if not selected:
+            return
+        self._remember_project(selected)
+        self._set_status(f"Projeto selecionado: {selected}")
 
     def _handle_drop_path(self, path: str) -> None:
         """Accept a folder (or a file inside one) dropped on the project field."""
@@ -1216,6 +1229,7 @@ class PoliglotaGUI:
             translate=self._handle_translate,
             translate_project=self._handle_translate_project,
             choose_project=self._choose_project_dir,
+            project_history_selected=self._apply_recent_project_selection,
             cancel=self._cancel_operation,
             restore_defaults=self._restore_defaults,
             copy_output=self._copy_output,
@@ -1237,6 +1251,8 @@ class PoliglotaGUI:
         self.view.apply_theme(theme_name)
         self.view.apply_geometry(self.state.window_geometry)
         self.view.bind_shortcuts()
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            self.root.bind("<Configure>", self._on_window_configured)
         self._refresh_preset_combo()
         self._remember_project(str(self.project_root))
         self._enable_file_drop()
@@ -1282,6 +1298,13 @@ class PoliglotaGUI:
         self._refresh_validation()
         self._schedule_state_save()
         self._set_status("Padrões restaurados.")
+
+    def _on_window_configured(self, _event: object = None) -> None:
+        """Persist the current window geometry after resize or move events."""
+        if self.root is None or self._window_closed or not self._is_window_alive():
+            return
+        self.state.window_geometry = self.view.geometry() or self.state.window_geometry
+        self._schedule_state_save()
 
     def _confirm_close(self) -> bool:
         """Ask the user before closing the window during a running operation."""

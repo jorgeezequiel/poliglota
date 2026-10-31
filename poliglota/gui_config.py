@@ -330,4 +330,3 @@ def save_presets(presets: Mapping[str, Preset], path: Path | None = None) -> boo
 
     logger.debug("GUI presets saved to %s", target)
     return True
-

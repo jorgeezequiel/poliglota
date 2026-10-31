@@ -10,15 +10,9 @@ from poliglota.gui_config import (
     DEVICE_CHOICES,
     ENGINE_CHOICES,
     FORMAT_CHOICES,
-    PRESETS_FILE_NAME,
-    RECENT_PROJECTS_LIMIT,
     GuiState,
-    Preset,
     default_state_path,
-    load_presets,
     load_state,
-    presets_path,
-    save_presets,
     save_state,
 )
 

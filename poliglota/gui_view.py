@@ -339,6 +339,7 @@ class GuiActions:
     translate: Callable[[], None]
     translate_project: Callable[[], None]
     choose_project: Callable[[], None]
+    project_history_selected: Callable[[], None]
     cancel: Callable[[], None]
     restore_defaults: Callable[[], None]
     copy_output: Callable[[], None]
@@ -537,15 +538,21 @@ class GuiView:
         form.pack(fill=tk.X, pady=(8, 12))
 
         ttk.Label(form, text="Projeto:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
+        project_combo = ttk.Combobox(form, textvariable=variables.project, state="normal")
         self._register_entry(
             "project",
-            ttk.Combobox(form, textvariable=variables.project, state="normal"),
+            project_combo,
             row=0,
             column=1,
             sticky="ew",
             tooltip="Pasta raiz do projeto; o histórico de pastas recentes fica na lista.",
             combo=True,
         )
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            project_combo.bind(
+                "<<ComboboxSelected>>",
+                self._event_handler(self._actions.project_history_selected),
+            )
         select_button = ttk.Button(form, text="Selecionar", command=self._actions.choose_project)
         select_button.grid(row=0, column=2, pady=4)
         self.action_buttons.append(select_button)
