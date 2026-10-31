@@ -1,5 +1,9 @@
 # Poliglota
 
+<p align="center">
+  <img src="docs/assets/brand/original/poliglota-matte-flat-logo.png" alt="Poliglota Matte Flat Logo" width="720" />
+</p>
+
 [![CI](https://github.com/jorgeezequiel/poliglota/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jorgeezequiel/poliglota/actions/workflows/ci.yml)
 
 Poliglota é uma ferramenta leve para validar, sincronizar e traduzir recursos de localização sem acoplar o projeto a um único formato ou a um único fluxo de interface.
