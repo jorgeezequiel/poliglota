@@ -35,7 +35,13 @@ class DummyEntry:
     def focus_set(self) -> None:
         self.focused = True
 
-    def bind(self, sequence: str, handler: Callable[[object], str]) -> None:
+    def bind(
+        self,
+        sequence: str,
+        handler: Callable[[object], str],
+        *_args: object,
+        **_kwargs: object,
+    ) -> None:
         self.bindings[sequence] = handler
 
 
@@ -43,12 +49,14 @@ class DummyText:
     def __init__(self) -> None:
         self.text = ""
         self.seen = False
+        self.inserted_tags: list[object] = []
 
     def delete(self, *_args: object) -> None:
         self.text = ""
 
-    def insert(self, _index: object, value: str) -> None:
+    def insert(self, _index: object, value: str, tags: object = ()) -> None:
         self.text += value
+        self.inserted_tags.append(tags)
 
     def see(self, *_args: object) -> None:
         self.seen = True
@@ -106,6 +114,9 @@ def _actions(calls: list[str]) -> GuiActions:
         copy_output=record("copy_output"),
         save_output=record("save_output"),
         clear_output=record("clear_output"),
+        apply_preset=record("apply_preset"),
+        save_preset=record("save_preset"),
+        delete_preset=record("delete_preset"),
     )
 
 

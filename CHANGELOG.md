@@ -73,6 +73,11 @@ O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e 
 
 ### Adicionado
 
+- **P3: conforto e robustez da GUI** — presets nomeados, histórico de projetos recentes, arrasto de pasta/arquivo para o campo do projeto, separação real de `stderr` e `stdout` na saída e objeto de job do Windows para finalizar a árvore de processo do CLI em caso de cancelamento ou timeout.
+- **Presets e histórico de projetos**: o formulário pode salvar combinações nomeadas de opções e reusar rapidamente, enquanto a pasta do projeto é lembrada em histórico e sugerida na combobox do campo de projeto.
+- **Drag-and-drop de pasta**: arrastar uma pasta para o campo de projeto é aceito quando `tkinterdnd2` está instalado; sem a dependência, a GUI simplesmente continua funcionando sem quebrar o fluxo.
+- **Separação real de stderr**: linhas de erro da CLI são surfadas em um canal de erro e renderizadas com destaque colorido, sem misturar com o stdout normal.
+- **Job object no Windows**: o processo filho da GUI agora é colocado em um job object e encerrado como um conjunto, evitando que subprocessos filhos sobrevivam ao cancelamento.
 - **Persistência do formulário da GUI**: pasta do projeto, formato, locales, motor, dispositivo, modelo e `dry-run` são restaurados na sessão seguinte. O estado é gravado em `%APPDATA%\poliglota\gui_state.json` (Windows), `~/Library/Application Support/poliglota/gui_state.json` (macOS) ou `$XDG_CONFIG_HOME/poliglota/gui_state.json` (Linux), com autosave de 600 ms e gravação imediata ao fechar a janela.
 - Novas opções `--state-file` e variável de ambiente `POLIGLOTA_GUI_STATE_FILE` para escolher outro arquivo de estado.
 - **Validação em tempo real na GUI**: linha de status abaixo do formulário com `✓ Configuração válida.` ou `✗ <Campo>: <motivo>`, foco automático no primeiro campo inválido e bloqueio do comando enquanto houver pendência. Cobre pasta do projeto, locales de origem/destino, nome do modelo e texto de tradução.

@@ -51,6 +51,17 @@ GEOMETRY_PATTERN = re.compile(r"(\d{2,5})x(\d{2,5})(?:([+-]\d{1,5})([+-]\d{1,5})
 
 INVALID_ENTRY_STYLE = "Invalid.TEntry"
 NORMAL_ENTRY_STYLE = "TEntry"
+INVALID_COMBO_STYLE = "Invalid.TCombobox"
+NORMAL_COMBO_STYLE = "TCombobox"
+
+#: Tk tag used to paint lines that arrived on the CLI's stderr.
+STDERR_TAG = "stderr"
+
+#: Drag-and-drop payload name understood by ``tkinterdnd2``.
+DND_FILES = "DND_Files"
+
+#: Placeholder shown in the preset combobox when nothing is selected.
+NO_PRESET_LABEL = "(nenhum)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +154,37 @@ def normalize_geometry(geometry: str, *, screen_width: int, screen_height: int) 
 
 def _clamp(value: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(value, maximum))
+
+
+def parse_drop_paths(payload: str) -> list[str]:
+    """Split a Tk drop payload into individual paths.
+
+    Tk wraps paths containing spaces in braces and separates entries with
+    whitespace, so ``{C:/a b} C:/c`` yields two paths. Empty payloads and
+    unbalanced braces degrade to whatever could be read.
+    """
+    paths: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+
+    for char in payload or "":
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth = max(depth - 1, 0)
+            continue
+        if char.isspace() and depth == 0:
+            if buffer:
+                paths.append("".join(buffer))
+                buffer = []
+            continue
+        buffer.append(char)
+
+    if buffer:
+        paths.append("".join(buffer))
+
+    return paths
 
 
 def configure_dpi_scaling(root: object) -> float | None:
@@ -284,6 +326,7 @@ class GuiVariables:
     model: tk.StringVar
     dry_run: tk.BooleanVar
     theme: tk.StringVar
+    preset: tk.StringVar
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,6 +344,9 @@ class GuiActions:
     copy_output: Callable[[], None]
     save_output: Callable[[], None]
     clear_output: Callable[[], None]
+    apply_preset: Callable[[], None]
+    save_preset: Callable[[], None]
+    delete_preset: Callable[[], None]
 
 
 class GuiView:
@@ -314,16 +360,19 @@ class GuiView:
         self.validation_label: ttk.Label | None = None
         self.progress: ttk.Progressbar | None = None
         self.cancel_button: ttk.Button | None = None
+        self.preset_combo: ttk.Combobox | None = None
         self.interactive_widgets: list[object] = []
         self.action_buttons: list[object] = []
         self.output_buttons: list[object] = []
         self.field_widgets: dict[str, object] = {}
         self.multiline_fields: dict[str, object] = {}
+        self.combo_fields: set[str] = set()
         self.tooltips: list[Tooltip] = []
         self.theme = DEFAULT_THEME
         self._style: ttk.Style | None = None
         self._actions: GuiActions | None = None
         self._translation_variable: object | None = None
+        self._drop_target: object | None = None
 
     def build(
         self,
@@ -342,8 +391,11 @@ class GuiView:
         self.output_buttons = []
         self.field_widgets = {}
         self.multiline_fields = {}
+        self.combo_fields = set()
         self.tooltips = []
         self.translation_text = None
+        self.preset_combo = None
+        self._drop_target = None
 
         main_frame = ttk.Frame(root, padding=14)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -366,6 +418,8 @@ class GuiView:
         self.interactive_widgets.append(theme_combo)
         self._add_tooltip(theme_combo, "Alterna entre os temas claro e escuro.")
         ttk.Label(header_row, text="Tema:").pack(side=tk.RIGHT, padx=(0, 6))
+
+        self._build_preset_row(main_frame, variables, actions)
 
         ttk.Label(main_frame, text=f"Versão: {version}", style="Muted.TLabel").pack(anchor="w")
         ttk.Label(
@@ -418,6 +472,46 @@ class GuiView:
         with contextlib.suppress(AttributeError, TypeError, tk.TclError):
             self.output_text.configure(state=tk.DISABLED)
 
+    def _build_preset_row(
+        self,
+        parent: ttk.Frame,
+        variables: GuiVariables,
+        actions: GuiActions,
+    ) -> None:
+        """Create the preset selector and its save/delete actions."""
+        preset_row = ttk.Frame(parent)
+        preset_row.pack(fill=tk.X, pady=(8, 0))
+
+        ttk.Label(preset_row, text="Preset:").pack(side=tk.LEFT, padx=(0, 6))
+        self.preset_combo = ttk.Combobox(
+            preset_row,
+            textvariable=variables.preset,
+            values=[NO_PRESET_LABEL],
+            state="readonly",
+            width=28,
+        )
+        self.preset_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.interactive_widgets.append(self.preset_combo)
+        self._add_tooltip(
+            self.preset_combo,
+            "Configurações salvas; escolher uma aplica na hora.",
+        )
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            self.preset_combo.bind(
+                "<<ComboboxSelected>>",
+                self._event_handler(actions.apply_preset),
+            )
+
+        save_button = ttk.Button(preset_row, text="Salvar preset", command=actions.save_preset)
+        save_button.pack(side=tk.LEFT, padx=(0, 8))
+        self.action_buttons.append(save_button)
+        self._add_tooltip(save_button, "Guarda o formulário atual com um nome.")
+
+        delete_button = ttk.Button(preset_row, text="Excluir", command=actions.delete_preset)
+        delete_button.pack(side=tk.LEFT)
+        self.action_buttons.append(delete_button)
+        self._add_tooltip(delete_button, "Remove o preset selecionado.")
+
     def _add_tooltip(self, widget: object, text: str) -> Tooltip:
         """Attach a hover tooltip to ``widget`` and keep it for cleanup."""
         tooltip = Tooltip(widget, text)
@@ -445,11 +539,12 @@ class GuiView:
         ttk.Label(form, text="Projeto:").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=4)
         self._register_entry(
             "project",
-            ttk.Entry(form, textvariable=variables.project),
+            ttk.Combobox(form, textvariable=variables.project, state="normal"),
             row=0,
             column=1,
             sticky="ew",
-            tooltip="Pasta raiz do projeto de traduções.",
+            tooltip="Pasta raiz do projeto; o histórico de pastas recentes fica na lista.",
+            combo=True,
         )
         select_button = ttk.Button(form, text="Selecionar", command=self._actions.choose_project)
         select_button.grid(row=0, column=2, pady=4)
@@ -652,6 +747,7 @@ class GuiView:
         columnspan: int = 1,
         sticky: str = "ew",
         tooltip: str | None = None,
+        combo: bool = False,
     ) -> None:
         widget.grid(
             row=row,
@@ -663,6 +759,8 @@ class GuiView:
         )
         self.interactive_widgets.append(widget)
         self.field_widgets[name] = widget
+        if combo:
+            self.combo_fields.add(name)
         if tooltip:
             self._add_tooltip(widget, tooltip)
 
@@ -782,6 +880,21 @@ class GuiView:
                 foreground=[("readonly", theme.foreground)],
             )
             style.configure(
+                INVALID_COMBO_STYLE,
+                fieldbackground=theme.invalid_background,
+                background=theme.invalid_background,
+                foreground=theme.foreground,
+                arrowcolor=theme.error,
+                bordercolor=theme.error,
+                lightcolor=theme.error,
+                darkcolor=theme.error,
+            )
+            style.map(
+                INVALID_COMBO_STYLE,
+                fieldbackground=[("readonly", theme.invalid_background)],
+                foreground=[("readonly", theme.foreground)],
+            )
+            style.configure(
                 "TCheckbutton",
                 background=theme.background,
                 foreground=theme.foreground,
@@ -808,6 +921,8 @@ class GuiView:
                 highlightbackground=theme.border,
                 highlightcolor=theme.accent,
             )
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            self.output_text.tag_configure(STDERR_TAG, foreground=theme.error)
 
     def _configure_text_fields(self, theme: Theme) -> None:
         for widget in self.multiline_fields.values():
@@ -836,7 +951,10 @@ class GuiView:
             if name in self.multiline_fields:
                 self._style_multiline_field(widget, invalid=is_invalid)
                 continue
-            style = INVALID_ENTRY_STYLE if is_invalid else NORMAL_ENTRY_STYLE
+            if name in self.combo_fields:
+                style = INVALID_COMBO_STYLE if is_invalid else NORMAL_COMBO_STYLE
+            else:
+                style = INVALID_ENTRY_STYLE if is_invalid else NORMAL_ENTRY_STYLE
             with contextlib.suppress(AttributeError, TypeError, tk.TclError):
                 widget.configure(style=style)
 
@@ -856,6 +974,57 @@ class GuiView:
             return
         with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
             focus_set()
+
+    def set_presets(self, names: list[str], *, selected: str = "") -> None:
+        """Fill the preset combobox with ``names`` and select one of them."""
+        combo = self.preset_combo
+        if combo is None:
+            return
+        values = [*names, NO_PRESET_LABEL]
+        with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+            combo.configure(values=values)
+        with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+            combo.set(selected or NO_PRESET_LABEL)
+
+    def set_recent_projects(self, values: list[str]) -> None:
+        """Refresh the project history dropdown without touching the field text."""
+        widget = self.field_widgets.get("project")
+        configure = getattr(widget, "configure", None)
+        if configure is None:
+            return
+        with contextlib.suppress(AttributeError, TypeError, tk.TclError):
+            configure(values=list(values))
+
+    def enable_file_drop(self, callback: Callable[[str], None]) -> bool:
+        """Accept dropped folders on the project field, when DnD is available.
+
+        ``tkinterdnd2`` is an optional dependency: without it the window simply
+        behaves as before and the caller can tell the user how to enable it.
+        """
+        target = self.field_widgets.get("project") or self.root
+        register = getattr(target, "drop_target_register", None)
+        bind = getattr(target, "bind", None)
+        if register is None or bind is None:
+            return False
+
+        try:
+            register(DND_FILES)
+        except (AttributeError, RuntimeError, tk.TclError):
+            return False
+
+        def on_drop(event: object) -> object:
+            paths = parse_drop_paths(str(getattr(event, "data", "") or ""))
+            if paths:
+                callback(paths[0])
+            return getattr(event, "action", None)
+
+        try:
+            bind("<<Drop>>", on_drop, add="+")
+        except (AttributeError, TypeError, RuntimeError, tk.TclError):
+            return False
+
+        self._drop_target = target
+        return True
 
     def set_busy(self, *, busy: bool) -> None:
         """Toggle the progress indicator and the cancel button."""
@@ -889,6 +1058,21 @@ class GuiView:
                 with contextlib.suppress(AttributeError, TypeError, tk.TclError):
                     configure(state=tk.DISABLED)
 
+    @staticmethod
+    def _insert_output_text(widget: object, value: str, *, tags: tuple[str, ...] = ()) -> None:
+        """Insert text into a Tk text widget, tolerating minimal test doubles."""
+        insert = getattr(widget, "insert", None)
+        if insert is None:
+            msg = "Text widget does not support insert()"
+            raise AttributeError(msg)
+        if not tags:
+            insert(tk.END, value)
+            return
+        try:
+            insert(tk.END, value, tags)
+        except TypeError:
+            insert(tk.END, value)
+
     def show_output(self, text: str) -> bool:
         """Replace the output pane content, returning False when the UI is gone."""
         if self.output_text is None:
@@ -898,21 +1082,22 @@ class GuiView:
                 if widget is None:
                     return True
                 widget.delete("1.0", tk.END)
-                widget.insert(tk.END, text.strip() or "Nenhuma saída do comando.")
+                self._insert_output_text(widget, text.strip() or "Nenhuma saída do comando.")
                 widget.see(tk.END)
         except (AttributeError, RuntimeError, tk.TclError):
             return False
         return True
 
-    def append_output(self, line: str) -> bool:
-        """Append one streamed line to the output pane, returning False on failure."""
+    def append_output(self, line: str, *, is_error: bool = False) -> bool:
+        """Append one streamed line, painting stderr lines with the error color."""
         if self.output_text is None:
             return True
         try:
             with self._writable_output() as widget:
                 if widget is None:
                     return True
-                widget.insert(tk.END, f"{line}\n")
+                tags = (STDERR_TAG,) if is_error else ()
+                self._insert_output_text(widget, f"{line}\n", tags=tags)
                 widget.see(tk.END)
         except (AttributeError, RuntimeError, tk.TclError):
             return False
@@ -989,9 +1174,14 @@ class GuiView:
             with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
                 self.root.bind(sequence, self._event_handler(callback))
 
-        for widget in self.field_widgets.values():
+        for name, widget in self.field_widgets.items():
             bind = getattr(widget, "bind", None)
             if bind is None:
+                continue
+            if name in self.multiline_fields:
+                # Enter must insert a newline here; Ctrl+Enter validates instead.
+                with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                    bind("<Control-Return>", self._event_handler(actions.validate))
                 continue
             with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
                 bind("<Return>", self._event_handler(actions.validate))

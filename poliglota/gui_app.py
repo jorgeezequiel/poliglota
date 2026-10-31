@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,13 +32,19 @@ except ImportError as exc:  # pragma: no cover - platform-specific fallback
 from . import __version__
 from .gui_config import (
     DEFAULT_THEME,
+    RECENT_PROJECTS_LIMIT,
     THEME_CHOICES,
     GuiState,
+    Preset,
     default_state_path,
+    load_presets,
     load_state,
+    presets_path,
+    save_presets,
     save_state,
 )
 from .gui_errors import build_error_report, categorize_error
+from .gui_process import WindowsJob
 from .gui_validators import (
     ValidationResult,
     validate_locale,
@@ -141,6 +147,8 @@ class PoliglotaGUI:
         self.headless = headless
         self.state_path = Path(state_path) if state_path is not None else default_state_path()
         self.state = GuiState()
+        self.presets: dict[str, Preset] = {}
+        self.recent_projects: list[str] = []
         self._root: tk.Tk | None = None
         self.status_var: tk.StringVar | None = None
         self.validation_var: tk.StringVar | None = None
@@ -154,6 +162,7 @@ class PoliglotaGUI:
         self.model_var: tk.StringVar | None = None
         self.sync_dry_run_var: tk.BooleanVar | None = None
         self.theme_var: tk.StringVar | None = None
+        self.preset_var: tk.StringVar | None = None
         self._is_running = False
         self._ui_built = False
         self._validation_results: dict[str, ValidationResult] = {}
@@ -166,11 +175,13 @@ class PoliglotaGUI:
         self._poll_after_id: object | None = None
         self._save_after_id: object | None = None
         self._process: subprocess.Popen[str] | None = None
+        self._job: WindowsJob | None = None
         self._cancel_requested = False
         self._streamed_output = False
         self._elapsed_token = 0
         self._operation_started = 0.0
         self._operation_message = ""
+        self._drop_enabled = False
 
     @property
     def root(self) -> tk.Tk | None:
@@ -271,7 +282,8 @@ class PoliglotaGUI:
                             self._window_closed = True
                             break
                 elif message_type == "line":
-                    if not self._append_output(str(payload)):
+                    line, is_error = self._split_line_payload(payload)
+                    if not self._append_output(line, is_error=is_error):
                         break
                 elif message_type == "result":
                     if not self._insert_output(str(payload)):
@@ -317,14 +329,22 @@ class PoliglotaGUI:
             return False
         return True
 
-    def _append_output(self, line: str) -> bool:
+    def _append_output(self, line: str, *, is_error: bool = False) -> bool:
         """Append one streamed line to the output pane."""
         if self.output_text is None:
             return True
-        if not self.view.append_output(line):
+        if not self.view.append_output(line, is_error=is_error):
             self._window_closed = True
             return False
         return True
+
+    @staticmethod
+    def _split_line_payload(payload: object) -> tuple[str, bool]:
+        """Accept both ``str`` and ``(line, is_error)`` queue payloads."""
+        if isinstance(payload, tuple) and len(payload) == 2:
+            line, is_error = payload
+            return str(line), bool(is_error)
+        return str(payload), False
 
     def _clear_output(self) -> None:
         """Empty the output pane before a new command starts streaming."""
@@ -390,15 +410,19 @@ class PoliglotaGUI:
             return
         self._set_status(f"Saída salva em {selected}.")
 
-    def _stream_line(self, line: str) -> None:
+    def _stream_line(self, line: str, *, is_error: bool = False) -> None:
         """Receive one CLI output line from the worker thread."""
         self._streamed_output = True
         if self._window_closed:
             return
         if threading.current_thread() is threading.main_thread():
-            self._append_output(line)
+            self._append_output(line, is_error=is_error)
             return
-        self._message_queue.put(("line", line))
+        self._message_queue.put(("line", (line, is_error)))
+
+    def _stream_error(self, line: str) -> None:
+        """Receive one CLI stderr line from the worker thread."""
+        self._stream_line(line, is_error=True)
 
     def _show_result(self, output: str) -> None:
         if self.output_text is None:
@@ -489,7 +513,10 @@ class PoliglotaGUI:
         self._set_status("Cancelando operação...")
 
     def _terminate_process(self) -> None:
-        """Terminate the CLI process, if one is running."""
+        """Terminate the CLI process tree, if one is running."""
+        job = self._job
+        if job is not None and job.active:
+            job.terminate()
         process = self._process
         if process is None:
             return
@@ -500,9 +527,12 @@ class PoliglotaGUI:
         with contextlib.suppress(OSError):
             process.terminate()
 
-    @staticmethod
-    def _handle_timeout(process: subprocess.Popen[str], timed_out: threading.Event) -> None:
+    def _handle_timeout(self, process: subprocess.Popen[str], timed_out: threading.Event) -> None:
+        """Kill the CLI process tree once the command exceeds its deadline."""
         timed_out.set()
+        job = self._job
+        if job is not None and job.active:
+            job.terminate()
         with contextlib.suppress(OSError):
             process.kill()
 
@@ -635,8 +665,9 @@ class PoliglotaGUI:
         theme = self._var_value(self.theme_var) or self.view.theme
         if theme not in THEME_CHOICES:
             theme = DEFAULT_THEME
+        project_root = self._var_value(self.project_var) or str(self.project_root)
         return GuiState(
-            project_root=self._var_value(self.project_var) or str(self.project_root),
+            project_root=project_root,
             format=self._var_value(self.format_var) or "arb",
             source_locale=self._var_value(self.source_var) or "pt_BR",
             target_locale=self._var_value(self.target_var) or "en_US",
@@ -646,6 +677,7 @@ class PoliglotaGUI:
             dry_run=bool(dry_run),
             theme=theme,
             window_geometry=self.view.geometry() or self.state.window_geometry,
+            recent_projects=list(self.recent_projects),
         )
 
     def _save_state_now(self) -> None:
@@ -654,7 +686,157 @@ class PoliglotaGUI:
         if not self._ui_built:
             return
         self.state = self._current_state()
+        self._remember_project(self.state.project_root)
+        self.state.recent_projects = list(self.recent_projects)
         save_state(self.state, self.state_path)
+
+    def _preset_names(self) -> list[str]:
+        """Return the saved preset names in a stable, user-friendly order."""
+        return sorted(self.presets, key=str.casefold)
+
+    def _refresh_preset_combo(self, *, selected: str = "") -> None:
+        """Mirror the saved presets into the view's combobox."""
+        self.view.set_presets(self._preset_names(), selected=selected)
+
+    def _selected_preset(self) -> Preset | None:
+        """Return the preset currently chosen in the combobox, if any."""
+        return self.presets.get(self._var_value(self.preset_var))
+
+    def _apply_preset_values(self, preset: Preset) -> None:
+        """Copy the preset values into the form without touching the text field."""
+        values = (
+            (self.project_var, preset.project_root or str(self.project_root)),
+            (self.format_var, preset.format),
+            (self.source_var, preset.source_locale),
+            (self.target_var, preset.target_locale),
+            (self.engine_var, preset.engine),
+            (self.device_var, preset.device),
+            (self.model_var, preset.model_name),
+            (self.sync_dry_run_var, preset.dry_run),
+        )
+        for variable, value in values:
+            if variable is None:
+                continue
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                variable.set(value)
+        self._refresh_validation()
+        self._schedule_state_save()
+
+    def _handle_apply_preset(self) -> None:
+        """Apply the preset selected in the combobox."""
+        preset = self._selected_preset()
+        if preset is None:
+            return
+        self._apply_preset_values(preset)
+        self._set_status(f"Preset '{preset.name}' aplicado.")
+
+    def _handle_save_preset(self) -> None:
+        """Save the current form values under a name chosen by the user."""
+        name = self._ask_preset_name()
+        if not name:
+            return
+        preset = Preset.from_state(name, self._current_state())
+        self.presets[name] = preset
+        if not save_presets(self.presets, presets_path(self.state_path)):
+            self._set_status(f"Não foi possível salvar o preset '{name}'.")
+            return
+        self._refresh_preset_combo(selected=name)
+        self._set_status(f"Preset '{name}' salvo.")
+
+    def _handle_delete_preset(self) -> None:
+        """Delete the preset selected in the combobox, after confirmation."""
+        preset = self._selected_preset()
+        if preset is None:
+            self._set_status("Selecione um preset para excluir.")
+            return
+        if not self._confirm_delete_preset(preset.name):
+            return
+        self.presets.pop(preset.name, None)
+        if not save_presets(self.presets, presets_path(self.state_path)):
+            self._set_status(f"Não foi possível excluir o preset '{preset.name}'.")
+            return
+        if self.preset_var is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                self.preset_var.set("")
+        self._refresh_preset_combo()
+        self._set_status(f"Preset '{preset.name}' excluído.")
+
+    def _ask_preset_name(self) -> str:
+        """Ask the user for a preset name, returning an empty string on cancel."""
+        ask = getattr(simpledialog, "askstring", None)
+        if ask is None:
+            return ""
+        current = self._var_value(self.preset_var)
+        try:
+            answer = ask(
+                "Salvar preset",
+                "Nome do preset:",
+                initialvalue=current,
+                parent=self.root,
+            )
+        except (AttributeError, RuntimeError, tk.TclError):
+            return ""
+        return str(answer).strip() if answer else ""
+
+    def _confirm_delete_preset(self, name: str) -> bool:
+        """Ask the user to confirm deleting ``name``."""
+        ask = getattr(messagebox, "askyesno", None)
+        if ask is None:
+            return True
+        try:
+            return bool(
+                ask(
+                    "Poliglota",
+                    f"Excluir o preset '{name}'?",
+                ),
+            )
+        except (AttributeError, RuntimeError, tk.TclError):
+            return True
+
+    def _remember_project(self, path: str) -> None:
+        """Move ``path`` to the front of the recent-project history."""
+        cleaned = path.strip()
+        if not cleaned:
+            return
+        recent = [item for item in self.recent_projects if item != cleaned]
+        recent.insert(0, cleaned)
+        self.recent_projects = recent[:RECENT_PROJECTS_LIMIT]
+        self.view.set_recent_projects(self.recent_projects)
+
+    def _handle_drop_path(self, path: str) -> None:
+        """Accept a folder (or a file inside one) dropped on the project field."""
+        cleaned = path.strip()
+        if not cleaned:
+            return
+        candidate = Path(cleaned).expanduser()
+        if candidate.is_file():
+            candidate = candidate.parent
+        if not candidate.is_dir():
+            self._set_status(f"Pasta inválida: {cleaned}")
+            return
+        if self.project_var is not None:
+            with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                self.project_var.set(str(candidate))
+        self._remember_project(str(candidate))
+        self._set_status(f"Projeto definido para {candidate}.")
+
+    def _enable_file_drop(self) -> bool:
+        """Wire drag-and-drop when ``tkinterdnd2`` is installed."""
+        if self._drop_enabled:
+            return True
+        self._drop_enabled = self.view.enable_file_drop(self._handle_drop_path)
+        return self._drop_enabled
+
+    def _create_root(self) -> tk.Tk:
+        """Create the Tk root, preferring the drag-and-drop capable one."""
+        try:
+            from tkinterdnd2 import TkinterDnD
+        except ImportError:
+            return tk.Tk()
+        try:
+            return TkinterDnD.Tk()
+        except (AttributeError, RuntimeError, tk.TclError):
+            return tk.Tk()
 
     def _build_project_root(self) -> Path:
         raw_value = self.project_var.get().strip() if self.project_var is not None else ""
@@ -716,15 +898,22 @@ class PoliglotaGUI:
         self,
         *argv: str,
         on_line: Callable[[str], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
     ) -> tuple[int, str]:
-        """Run the CLI, streaming each output line through ``on_line``."""
+        """Run the CLI, streaming stdout and stderr separately.
+
+        ``on_line`` receives stdout lines and ``on_error`` receives stderr
+        lines, so the GUI can paint diagnostics differently. When ``on_error``
+        is omitted the stderr lines fall back to ``on_line``, keeping older
+        callers working.
+        """
         command = [sys.executable, "-m", "poliglota", *argv]
         try:
             process = subprocess.Popen(  # noqa: S603
                 command,
                 cwd=str(self.project_root),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -733,9 +922,12 @@ class PoliglotaGUI:
         except OSError as exc:
             return 1, f"Erro ao executar o comando: {exc}"
 
+        job = WindowsJob()
+        job.attach(process)
+        self._job = job
         self._process = process
         if self._cancel_requested:
-            self._terminate(process)
+            self._terminate_process()
         timed_out = threading.Event()
         timer = threading.Timer(
             COMMAND_TIMEOUT_SECONDS,
@@ -745,7 +937,28 @@ class PoliglotaGUI:
         timer.daemon = True
         timer.start()
 
-        lines: list[str] = []
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
+        error_sink = on_error if on_error is not None else on_line
+
+        def read_stderr() -> None:
+            stream = process.stderr
+            if stream is None:
+                return
+            try:
+                for raw_line in stream:
+                    line = raw_line.rstrip("\r\n")
+                    if not line:
+                        continue
+                    stderr_lines.append(line)
+                    if error_sink is not None:
+                        error_sink(line)
+            except (OSError, ValueError):
+                return
+
+        error_reader = threading.Thread(target=read_stderr, daemon=True)
+        error_reader.start()
+
         stream = process.stdout
         try:
             if stream is not None:
@@ -753,23 +966,30 @@ class PoliglotaGUI:
                     line = raw_line.rstrip("\r\n")
                     if not line:
                         continue
-                    lines.append(line)
+                    stdout_lines.append(line)
                     if on_line is not None:
                         on_line(line)
                     if self._cancel_requested and process.poll() is None:
-                        self._terminate(process)
+                        self._terminate_process()
             returncode = process.wait()
+            error_reader.join(timeout=5)
         finally:
             timer.cancel()
             if stream is not None:
                 with contextlib.suppress(OSError):
                     stream.close()
+            with contextlib.suppress(OSError):
+                error_stream = process.stderr
+                if error_stream is not None:
+                    error_stream.close()
             self._process = None
+            self._job = None
+            job.close()
 
         if timed_out.is_set():
             return 1, "Tempo limite excedido ao executar o comando."
 
-        output = "\n".join(lines).strip()
+        output = "\n".join([*stdout_lines, *stderr_lines]).strip()
         if not output:
             output = f"Comando concluído com código de saída {returncode}."
         return returncode, output
@@ -791,7 +1011,11 @@ class PoliglotaGUI:
 
         def worker() -> None:
             try:
-                exit_code, output = self._run_cli_command(*command, on_line=self._stream_line)
+                exit_code, output = self._run_cli_command(
+                    *command,
+                    on_line=self._stream_line,
+                    on_error=self._stream_error,
+                )
             except OSError as exc:
                 output = f"Erro ao executar comando: {exc}"
                 exit_code = 1
@@ -939,13 +1163,15 @@ class PoliglotaGUI:
             return
 
         enable_high_dpi()
-        self.root = tk.Tk()
+        self.root = self._create_root()
         self.root.title(f"Poliglota {__version__}")
         self.root.minsize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self._close_window)
         configure_dpi_scaling(self.root)
 
         self.state = load_state(self.state_path)
+        self.presets = load_presets(presets_path(self.state_path))
+        self.recent_projects = list(self.state.recent_projects)
         if not self._explicit_project_root and self.state.project_root:
             self.project_root = Path(self.state.project_root).expanduser()
 
@@ -962,6 +1188,7 @@ class PoliglotaGUI:
         self.sync_dry_run_var = tk.BooleanVar(value=self.state.dry_run)
         theme_name = self.state.theme if self.state.theme in THEME_CHOICES else DEFAULT_THEME
         self.theme_var = tk.StringVar(value=theme_name)
+        self.preset_var = tk.StringVar(value="")
         self._interactive_widgets = []
         self._action_buttons = []
         self._disabled_states = {}
@@ -980,6 +1207,7 @@ class PoliglotaGUI:
             model=self.model_var,
             dry_run=self.sync_dry_run_var,
             theme=self.theme_var,
+            preset=self.preset_var,
         )
         actions = GuiActions(
             validate=self._handle_validate,
@@ -993,6 +1221,9 @@ class PoliglotaGUI:
             copy_output=self._copy_output,
             save_output=self._save_output,
             clear_output=self._handle_clear_output,
+            apply_preset=self._handle_apply_preset,
+            save_preset=self._handle_save_preset,
+            delete_preset=self._handle_delete_preset,
         )
 
         self.view.build(
@@ -1006,6 +1237,9 @@ class PoliglotaGUI:
         self.view.apply_theme(theme_name)
         self.view.apply_geometry(self.state.window_geometry)
         self.view.bind_shortcuts()
+        self._refresh_preset_combo()
+        self._remember_project(str(self.project_root))
+        self._enable_file_drop()
 
         for variable in (
             self.project_var,
@@ -1070,6 +1304,7 @@ class PoliglotaGUI:
         self._cancel_state_save()
         self._cancel_requested = True
         self._terminate_process()
+        self._close_job()
         self._save_state_now()
         self._window_closed = True
         self._cancel_ui_poll()
@@ -1077,12 +1312,20 @@ class PoliglotaGUI:
             with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
                 self.root.destroy()
 
+    def _close_job(self) -> None:
+        """Release the Windows job handle, killing any surviving process tree."""
+        job = self._job
+        self._job = None
+        if job is not None:
+            job.close()
+
     def _choose_project_dir(self) -> None:
         if self.root is None or self._window_closed or not self._is_window_alive():
             return
         selected = filedialog.askdirectory(title="Selecione a pasta do projeto")
         if selected and self.project_var is not None:
             self.project_var.set(selected)
+            self._remember_project(selected)
 
     def run(self) -> int:
         """Open the GUI window and start the Tk event loop."""

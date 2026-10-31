@@ -31,6 +31,7 @@ gpu = [
     "huggingface-hub>=0.20.0",
     "sacremoses>=0.1.0",
 ]
+dnd = ["tkinterdnd2>=0.4.0"]
 
 [tool.setuptools]
 packages = ["poliglota", "poliglota.core", "poliglota.formats", "poliglota.quality", "poliglota.engines"]
@@ -43,6 +44,7 @@ filterwarnings = ["error"]
 markers = [
     "unit: unit tests for isolated behavior",
     "gpu: tests that require GPU/CUDA-capable hardware or ML runtime support",
+    "gui: tests that need a real Tk display and skip when none is available",
 ]
 
 
