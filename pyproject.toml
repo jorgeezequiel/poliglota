@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "defusedxml>=0.7.1",
+    "langdetect>=1.0.9",
     "pyyaml>=6.0",
     "rich>=13.7.0",
     "torch>=2.7.0",
@@ -78,6 +79,8 @@ ignore = [
     # CLI and adapter entry points intentionally expose wider public signatures.
     "PLR0913",
     "PLR0917",
+    # Interactive CLI intentionally renders terminal output directly for guided flows.
+    "T201",
     # Dispatch and device-selection code is intentionally explicit for clarity.
     "C901",
     "PLR0911",

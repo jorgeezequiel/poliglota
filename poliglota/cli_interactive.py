@@ -7,6 +7,7 @@ from pathlib import Path
 from poliglota import cli, gpu
 from poliglota.formats.operations import discover_resources
 from poliglota.formats.registry_init import get_registry as get_global_registry
+from poliglota.language_detection import detect_source_locale, normalize_locale_code
 from poliglota.translation_workflow import translate_resource_files
 
 
@@ -125,11 +126,10 @@ def run_interactive() -> int:
         device = devices[dev_idx]
         resolved = cli.resolve_device_name(device)
         if device != "auto" and resolved == "cpu" and device in {"cuda", "mps"}:
-            print(
-                f"Erro: o dispositivo '{device}' não está disponível neste ambiente. "
-                "A execução continuará com CPU ou escolha outra opção."
+            raise ValueError(
+                f"O dispositivo '{device}' não está disponível neste ambiente. "
+                "Use CPU ou escolha outra opção."
             )
-            return 1
 
         registry = get_global_registry()
         formats = registry.names()
@@ -143,32 +143,40 @@ def run_interactive() -> int:
         root_str = _prompt_input("Caminho da pasta com arquivos de localização", default=".")
         root = Path(root_str)
         if not root.exists():
-            print(f"Erro: o caminho '{root}' não existe. Verifique a pasta informada.")
-            return 1
+            raise ValueError(f"O caminho '{root}' não existe. Verifique a pasta informada.")
         if root.is_file():
-            print(
-                f"Erro: o caminho '{root}' aponta para um arquivo, mas a operação espera uma pasta "
+            raise ValueError(
+                f"O caminho '{root}' aponta para um arquivo, mas a operação espera uma pasta "
                 "com recursos de localização."
             )
-            return 1
 
         adapter = registry.get(format_name)
         by_locale = discover_resources(adapter, root)
         if not by_locale:
             if any(root.rglob(f"*.{format_name}")):
-                print(
+                raise ValueError(
                     f"Nenhum locale foi reconhecido em '{root}' para o formato '{format_name}'. "
-                    "Verifique a estrutura esperada: arquivos nomeados como 'pt_BR.yaml', "
-                    "'<module>_pt_BR.yaml' ou pastas por locale."
+                    "Verifique a estrutura esperada ou a análise de conteúdo."
                 )
-            else:
-                print(
-                    f"Nenhum arquivo '{format_name}' foi encontrado em '{root}'. "
-                    f"Verifique o caminho informado e o formato selecionado ({format_name})."
-                )
-            return 1
+            raise ValueError(
+                f"Nenhum arquivo '{format_name}' foi encontrado em '{root}'. "
+                f"Verifique o caminho informado e o formato selecionado ({format_name})."
+            )
 
-        locales_list = sorted(by_locale.keys())
+        detection = detect_source_locale(root, format_name, adapter=adapter)
+        if detection.inconclusive:
+            raise ValueError(
+                "A detecção de idioma foi inconclusiva. Selecione manualmente o idioma de origem."
+            )
+
+        locale_candidates = [
+            normalize_locale_code(candidate.locale_code) or candidate.locale_code
+            for candidate in detection.candidates
+        ]
+        if locale_candidates:
+            locales_list = sorted(set(by_locale.keys()) | set(locale_candidates))
+        else:
+            locales_list = sorted(by_locale.keys())
         src_idx = _prompt_choice("Selecione o idioma de origem:", locales_list, default=0)
         source_locale = locales_list[src_idx]
 
@@ -179,8 +187,9 @@ def run_interactive() -> int:
             if _prompt_yes_no(f"Traduzir para {loc}?"):
                 target_locales.append(loc)
         if not target_locales:
-            print("Nenhum idioma de destino selecionado. É necessário escolher pelo menos um destino.")
-            return 1
+            raise ValueError(
+                "Nenhum idioma de destino selecionado. É necessário escolher pelo menos um destino."
+            )
 
         default_model = cli.select_default_motor(source_locale, target_locales[0])
         use_default = _prompt_yes_no("Usar modelo padrão sugerido?", default=True)
@@ -198,31 +207,13 @@ def run_interactive() -> int:
 
         is_cached = gpu.check_model_cached(model)
         if not is_cached:
-            print(f"Modelo {model} não encontrado ou incompleto no cache local.")
-            print("Nenhum download será iniciado sem consentimento explícito.")
-            if not _prompt_yes_no(f"Baixar e preparar o modelo {model}?", default=False):
-                print("Operação cancelada pelo usuário. Nenhum download foi realizado.")
-                return 0
-            try:
-                import importlib
-
-                transformers = importlib.import_module("transformers")
-                tokenizer = transformers.AutoTokenizer.from_pretrained(model)
-                model_obj = transformers.AutoModelForSeq2SeqLM.from_pretrained(model)
-                del tokenizer, model_obj
-                if not gpu.check_model_cached(model):
-                    print(f"Erro: o modelo {model} não ficou pronto localmente para uso.")
-                    return 1
-            except ImportError:
-                print("Erro: depende de 'transformers' para baixar o modelo localmente.")
-                return 1
-            except Exception as exc:  # pragma: no cover - defensive, requested graceful exit  # noqa: BLE001
-                print(f"Erro ao baixar/preparar o modelo {model}: {exc}")
-                return 1
+            raise ValueError(
+                f"Modelo {model} não encontrado ou incompleto no cache local."
+                " Nenhum download será iniciado sem consentimento explícito."
+            )
 
         if not _prompt_yes_no("Iniciar tradução?", default=False):
-            print("Tradução cancelada pelo usuário.")
-            return 0
+            raise ValueError("Tradução cancelada pelo usuário.")
 
         report = translate_resource_files(
             root=root,

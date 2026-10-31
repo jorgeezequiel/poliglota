@@ -6,11 +6,50 @@ They provide the core business logic that the CLI and other consumers need.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from poliglota.core.locale import Locale
+from poliglota.language_detection import detect_source_locale, normalize_locale_code
+
 if TYPE_CHECKING:
     from poliglota.core import FormatAdapter
+
+
+def _fallback_files(root_path: Path, format_name: str) -> list[Path]:
+    """List files for a format when the adapter cannot infer locales from names."""
+    suffixes: tuple[str, ...]
+    if format_name.lower() in {"yaml", "yml"}:
+        suffixes = (".yaml", ".yml")
+    elif format_name.lower() == "json":
+        suffixes = (".json",)
+    elif format_name.lower() == "xml":
+        suffixes = (".xml",)
+    elif format_name.lower() == "arb":
+        suffixes = (".arb",)
+    else:
+        suffixes = (f".{format_name.lower()}",)
+
+    files: list[Path] = []
+    for suffix in suffixes:
+        files.extend(root_path.rglob(f"*{suffix}"))
+
+    if format_name.lower() == "json":
+        files = [
+            path
+            for path in files
+            if path.name not in {"package.json", "tsconfig.json", "package-lock.json"}
+        ]
+
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for path in files:
+        if path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+    return unique
 
 
 def discover_resources(adapter: FormatAdapter, root: str | Path) -> dict[str, list]:
@@ -18,8 +57,43 @@ def discover_resources(adapter: FormatAdapter, root: str | Path) -> dict[str, li
 
     Returns a dict mapping locale codes to lists of LocalizedResource objects.
     """
+    from poliglota.core.format import LocalizedResource
+
     root_path = Path(root)
     resources = adapter.discover(root_path)
+
+    if not resources:
+        resources = [
+            LocalizedResource(
+                path=path,
+                locale=Locale("und"),
+                format=adapter.name,
+                attributes={"directory": str(path.parent.relative_to(root_path))},
+            )
+            for path in _fallback_files(root_path, adapter.name)
+        ]
+
+    unresolved = [
+        resource
+        for resource in resources
+        if not getattr(resource.locale, "code", "").strip()
+        or resource.locale.code.lower() in {"und", "unknown"}
+    ]
+    if unresolved:
+        detection = detect_source_locale(root_path, adapter.name, adapter=adapter)
+        detected_code = None
+        if not detection.inconclusive and detection.candidates:
+            detected_code = normalize_locale_code(detection.candidates[0].locale_code)
+
+        if detected_code is not None:
+            resolved_locale = Locale(detected_code)
+            resources = [
+                replace(resource, locale=resolved_locale)
+                if resource.locale.code.lower() in {"und", "unknown"}
+                else resource
+                for resource in resources
+            ]
+
     by_locale: dict[str, list] = {}
     for resource in resources:
         locale_code = resource.locale.code
