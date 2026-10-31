@@ -56,11 +56,70 @@ NORMAL_ENTRY_STYLE = "TEntry"
 INVALID_COMBO_STYLE = "Invalid.TCombobox"
 NORMAL_COMBO_STYLE = "TCombobox"
 
-#: Tk tag used to paint lines that arrived on the CLI's stderr.
-STDERR_TAG = "stderr"
+#: Tk tags used to distinguish streamed output by meaning instead of by pipe.
+INFO_TAG = "info"
+PROCESS_TAG = "process"
+WARNING_TAG = "warning"
+SUCCESS_TAG = "success"
+ERROR_TAG = "error"
+RESULT_TAG = "result"
 
 #: Drag-and-drop payload name understood by ``tkinterdnd2``.
 DND_FILES = "DND_Files"
+
+
+def classify_stream_message(message: str) -> str:
+    """Classify a raw CLI line from its content while preserving warnings."""
+    text = (message or "").strip()
+    if not text:
+        return INFO_TAG
+
+    lowered = text.lower()
+    error_tokens = (
+        "traceback",
+        "error:",
+        "exception",
+        "failed",
+        "not found",
+        "unsupported",
+        "timed out",
+        "invalid",
+        "no such file",
+    )
+    warning_tokens = (
+        "warning",
+        "warn",
+        "hf hub",
+        "hf_token",
+        "please set",
+        "max_new_tokens",
+        "out of memory",
+        "cuda",
+        "fallback",
+    )
+    process_tokens = (
+        "loading weights",
+        "loading",
+        "processing",
+        "preparing",
+        "downloading",
+        "using default motor",
+        "translating",
+    )
+    success_tokens = ("done", "completed", "success", "translated", "translation report")
+
+    if any(token in lowered for token in error_tokens):
+        return ERROR_TAG
+    if any(token in lowered for token in warning_tokens):
+        return WARNING_TAG
+    if any(token in lowered for token in process_tokens):
+        return PROCESS_TAG
+    if any(token in lowered for token in success_tokens):
+        return SUCCESS_TAG
+    if text.startswith(("[", "╭", "┌")):
+        return RESULT_TAG
+    return INFO_TAG
+
 
 #: Placeholder shown in the preset combobox when nothing is selected.
 NO_PRESET_LABEL = "(nenhum)"
@@ -1056,7 +1115,15 @@ class GuiView:
                 highlightcolor=theme.accent,
             )
         with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
-            self.output_text.tag_configure(STDERR_TAG, foreground=theme.error)
+            self.output_text.tag_configure(INFO_TAG, foreground=theme.foreground)
+            self.output_text.tag_configure(PROCESS_TAG, foreground=theme.accent)
+            self.output_text.tag_configure(
+                WARNING_TAG,
+                foreground="#b7791f" if theme.name == "light" else "#f7c873",
+            )
+            self.output_text.tag_configure(SUCCESS_TAG, foreground=theme.success)
+            self.output_text.tag_configure(ERROR_TAG, foreground=theme.error)
+            self.output_text.tag_configure(RESULT_TAG, foreground=theme.success)
 
     def _configure_text_fields(self, theme: Theme) -> None:
         for widget in self.multiline_fields.values():
@@ -1224,14 +1291,17 @@ class GuiView:
         return True
 
     def append_output(self, line: str, *, is_error: bool = False) -> bool:
-        """Append one streamed line, painting stderr lines with the error color."""
+        """Append one streamed line, painting it according to its semantic class."""
         if self.output_text is None:
             return True
         try:
             with self._writable_output() as widget:
                 if widget is None:
                     return True
-                tags = (STDERR_TAG,) if is_error else ()
+                tag = classify_stream_message(line)
+                if is_error and tag == INFO_TAG:
+                    tag = ERROR_TAG
+                tags = (tag,) if tag else ()
                 self._insert_output_text(widget, f"{line}\n", tags=tags)
                 widget.see(tk.END)
         except (AttributeError, RuntimeError, tk.TclError):

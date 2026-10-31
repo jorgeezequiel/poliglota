@@ -20,6 +20,63 @@ from .formats.operations import discover_resources, sync_with_adapter, validate_
 from .formats.registry_init import get_registry as get_global_registry
 from .quality.placeholders import ArbPlaceholderProtector
 
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+except ImportError:  # pragma: no cover - runtime fallback when rich is unavailable.
+    Console = None
+    Panel = None
+
+
+def _use_rich_console() -> bool:
+    """Return True when rich output is safe and useful in the current terminal."""
+    if Console is None:
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    stream = getattr(sys.stdout, "isatty", lambda: False)()
+    return bool(stream)
+
+
+def _render_cli_message(
+    message: str,
+    *,
+    title: str | None = None,
+    style: str = "cyan",
+) -> None:
+    """Render a user-facing CLI message with Rich when the terminal supports it."""
+    if not _use_rich_console() or Panel is None:
+        print(message)
+        return
+    console = Console(stderr=False, force_terminal=True)
+    if title:
+        console.print(
+            Panel.fit(
+                f"[bold {style}]{message}[/bold {style}]",
+                title=title,
+                border_style=style,
+            )
+        )
+        return
+    console.print(f"[bold {style}]{message}[/bold {style}]")
+
+
+def _render_cli_result(translated: str, *, source: str, target: str) -> None:
+    """Render the translated text in a prominent rich panel when supported."""
+    if not _use_rich_console() or Panel is None:
+        print(translated)
+        return
+    console = Console(stderr=False, force_terminal=True)
+    title = f"{source} → {target}"
+    console.print(
+        Panel.fit(
+            f"[bold green]{translated}[/bold green]",
+            title=title,
+            border_style="green",
+        )
+    )
+
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -1107,7 +1164,11 @@ def _run_translate(
         try:
             model = _select_default_motor(source, target)
             if not json_output:
-                print(f"Using default motor: {model}")
+                _render_cli_message(
+                    f"Using default motor: {model}",
+                    title="Modelo padrão",
+                    style="cyan",
+                )
         except ValueError as exc:
             print(f"Error: {exc}")
             return 1
@@ -1225,7 +1286,7 @@ def _run_translate(
         print(json.dumps(payload, ensure_ascii=False))
         return 0
 
-    print(translated)
+    _render_cli_result(translated, source=source, target=target)
     return 0
 
 

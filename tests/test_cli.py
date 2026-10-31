@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import tomllib
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -9,7 +11,6 @@ from poliglota import cli as cli_module
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 
 @pytest.fixture
@@ -29,6 +30,14 @@ def mock_environ(monkeypatch: pytest.MonkeyPatch) -> Callable[[str | None], None
         monkeypatch.setenv("HF_HUB_OFFLINE", str(value))
 
     return _set
+
+
+@pytest.mark.unit
+def test_project_runtime_dependencies_include_rich() -> None:
+    pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    dependencies = data["project"]["dependencies"]
+    assert any(item.startswith("rich") for item in dependencies)
 
 
 @pytest.mark.unit
