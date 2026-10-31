@@ -96,7 +96,9 @@ def discover_resources(adapter: FormatAdapter, root: str | Path) -> dict[str, li
 
     by_locale: dict[str, list] = {}
     for resource in resources:
-        locale_code = resource.locale.code
+        locale_code = normalize_locale_code(resource.locale.code) or resource.locale.code
+        if locale_code.lower() in {"und", "unknown"}:
+            continue
         by_locale.setdefault(locale_code, []).append(resource)
     return by_locale
 

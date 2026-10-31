@@ -9,6 +9,8 @@ import logging
 import os
 import sys
 import time
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,11 +23,17 @@ from .formats.registry_init import get_registry as get_global_registry
 from .quality.placeholders import ArbPlaceholderProtector
 
 try:
+    from rich import box
+    from rich.align import Align
     from rich.console import Console
     from rich.panel import Panel
+    from rich.text import Text
 except ImportError:  # pragma: no cover - runtime fallback when rich is unavailable.
     Console = None
     Panel = None
+    box = None
+    Align = None
+    Text = None
 
 
 def _use_rich_console() -> bool:
@@ -63,19 +71,23 @@ def _render_cli_message(
 
 
 def _render_cli_result(translated: str, *, source: str, target: str) -> None:
-    """Render the translated text in a prominent rich panel when supported."""
-    if not _use_rich_console() or Panel is None:
+    """Render the translated text in a polished premium panel when supported."""
+    if not _use_rich_console() or Panel is None or box is None or Align is None or Text is None:
         print(translated)
         return
-    console = Console(stderr=False, force_terminal=True)
+    console = Console(stderr=False, force_terminal=True, emoji=False)
     title = f"{source} → {target}"
-    console.print(
-        Panel.fit(
-            f"[bold green]{translated}[/bold green]",
-            title=title,
-            border_style="green",
-        )
+    text = Text(str(translated).strip(), style="bold #d9f99d")
+    body = Align.center(text, vertical="middle")
+    panel = Panel(
+        body,
+        title=f"[bold #7dd3fc]{title}[/bold #7dd3fc]",
+        border_style="#22c55e",
+        box=box.ROUNDED,
+        expand=False,
+        padding=(1, 3),
     )
+    console.print(panel)
 
 
 if TYPE_CHECKING:
@@ -1105,7 +1117,7 @@ def translate_with_placeholders(
     )
 
 
-def _run_translate(
+def _translate_single_target(
     text: str,
     source: str,
     target: str,
@@ -1117,44 +1129,7 @@ def _run_translate(
     batch_size: int,
     json_output: bool,
 ) -> int:
-    """Translate a string through the offline Marian engine.
-
-    Motor Selection:
-        If --model is not specified, auto-selects the first model in
-        _DEFAULT_MOTOR_PRIORITY whose language set contains both the source and
-        target language codes (currently Opus-MT pairs for en/es, en/fr and
-        en/pt). Selection respects HF_HUB_OFFLINE=1 (offline mode accepts only
-        cached models). Override with POLIGLOTA_DEFAULT_MOTOR environment
-        variable.
-
-    Offline Capability Validation:
-        Calls _verify_offline_capability() before model load. If HF_HUB_OFFLINE=1
-        and cache missing, raises RuntimeError with clear error message.
-
-    Resource Footprint Validation:
-        Calls _validate_resource_footprint() for non-blocking warnings if model
-        exceeds 2GB disk or 2GB RAM thresholds (emitted to logger, non-fatal).
-
-    Batch Size Auto-scaling:
-        MariansNMTAdapter.translate_batch() automatically adjusts batch_size based
-        on device memory. On OOM: reduces batch_size and retries; fallback to CPU
-        if GPU memory exhausted.
-
-    Args:
-        text: Text string to translate.
-        source: Source locale code (e.g. pt_BR).
-        target: Target locale code (e.g. en_US).
-        engine: Translation engine name (marian or pytorch).
-        model: Specific HuggingFace model name; if None, auto-selected.
-        device: Device to run inference on (auto, cpu, cuda, mps, gpu).
-        preserve_placeholders: Whether to preserve ARB placeholders.
-        batch_size: Initial batch size for inference (auto-scaled on demand).
-        json_output: If True, output JSON instead of plain text.
-
-    Returns:
-        Exit code (0 on success, 1 on error).
-
-    """
+    """Translate one source text into a single target locale."""
     normalized_engine = (engine or "marian").strip().lower()
     if normalized_engine not in {"marian", "pytorch"}:
         print(f"Error: Unsupported engine '{engine}'. Use one of: marian, pytorch.")
@@ -1188,7 +1163,6 @@ def _run_translate(
         "preserve_placeholders": preserve_placeholders,
     }
 
-    cached = None
     if cache.enabled:
         cached = cache.get(
             text,
@@ -1297,6 +1271,99 @@ def _run_translate(
     return 0
 
 
+def _run_translate(
+    text: str,
+    source: str,
+    target: str,
+    *,
+    engine: str,
+    model: str | None,
+    device: str,
+    preserve_placeholders: bool,
+    batch_size: int,
+    json_output: bool,
+) -> int:
+    """Translate text into one or many target locales, keeping rich output readable."""
+    targets = [item.strip() for item in str(target).split(",") if item.strip()]
+    if len(targets) <= 1:
+        return _translate_single_target(
+            text,
+            source,
+            targets[0] if targets else str(target).strip(),
+            engine=engine,
+            model=model,
+            device=device,
+            preserve_placeholders=preserve_placeholders,
+            batch_size=batch_size,
+            json_output=json_output,
+        )
+
+    def _translate_target_payload(current_target: str) -> dict[str, Any] | None:
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            exit_code = _translate_single_target(
+                text,
+                source,
+                current_target,
+                engine=engine,
+                model=(model if model and str(model).strip() else _select_default_motor(source, current_target)),
+                device=device,
+                preserve_placeholders=preserve_placeholders,
+                batch_size=batch_size,
+                json_output=True,
+            )
+        if exit_code != 0:
+            return None
+        try:
+            payload = json.loads(buffer.getvalue().strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            return None
+        return payload
+
+    payloads: list[dict[str, Any]] = []
+    translated_by_target: list[tuple[str, str]] = []
+    for current_target in targets:
+        payload = _translate_target_payload(current_target)
+        if payload is None:
+            return 1
+        payloads.append(payload)
+        translated_by_target.append((current_target, str(payload.get("translated", ""))))
+
+    if json_output:
+        result = {
+            "text": text,
+            "source": source,
+            "target": ",".join(targets),
+            "translations": payloads,
+        }
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
+
+    if not _use_rich_console() or Panel is None:
+        for current_target, translated in translated_by_target:
+            print(f"{current_target}: {translated}")
+        return 0
+
+    title = f"{source} → {', '.join(targets)}"
+    lines = [
+        f"[bold #7dd3fc]{current_target}[/bold #7dd3fc]: [bold #d9f99d]{translated}[/bold #d9f99d]"
+        for current_target, translated in translated_by_target
+    ]
+    panel_text = Text.from_markup("\n".join(lines), style="white")
+    console = Console(stderr=False, force_terminal=True, emoji=False)
+    console.print(
+        Panel(
+            Align.left(panel_text),
+            title=f"[bold #7dd3fc]{title}[/bold #7dd3fc]",
+            border_style="#22c55e",
+            box=box.ROUNDED,
+            expand=False,
+            padding=(1, 2),
+        )
+    )
+    return 0
+
+
 def _run_translate_project(args: argparse.Namespace) -> int:
     """Translate all resource files in a project to target locale(s).
 
@@ -1326,13 +1393,20 @@ def _run_translate_project(args: argparse.Namespace) -> int:
         print("Error: at least one target locale required")
         return 1
 
+    out_dir = args.output_dir or (Path(args.root) / ".poliglota_translated")
+    if out_dir.exists() and any(out_dir.rglob("*")):
+        print(
+            f"Warning: output directory '{out_dir}' already contains files; existing translations may be overwritten.",
+            file=sys.stderr,
+        )
+
     try:
         report = translate_resource_files(
             root=args.root,
             source_locale=args.source,
             target_locales=target_locales,
             format_name=args.format,
-            output_dir=args.output_dir,
+            output_dir=out_dir,
             engine=normalized_engine,
             model=args.model,
             device=resolved_device,

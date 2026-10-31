@@ -10,6 +10,7 @@ from poliglota import cli
 from poliglota.core.locale import Locale
 from poliglota.formats.operations import discover_resources
 from poliglota.formats.registry_init import get_registry
+from poliglota.language_detection import normalize_locale_code
 
 if TYPE_CHECKING:
     from poliglota.engines.response_cache import ResponseCache
@@ -57,6 +58,14 @@ def translate_resource_files(
     """Translate source locale files into target locale files."""
     adapter = _get_adapter(format_name)
     by_locale = discover_resources(adapter, root)
+    canonical_source = normalize_locale_code(source_locale) or source_locale
+    available_sources = {normalize_locale_code(code) or code for code in by_locale}
+    if canonical_source not in available_sources:
+        if source_locale not in by_locale:
+            msg = f"Missing source locale '{source_locale}' in {root}"
+            raise ValueError(msg)
+        canonical_source = source_locale
+    source_locale = canonical_source
     if source_locale not in by_locale:
         msg = f"Missing source locale '{source_locale}' in {root}"
         raise ValueError(msg)
@@ -68,7 +77,8 @@ def translate_resource_files(
     source_resources = by_locale[source_locale]
 
     for target_locale in target_locales:
-        if target_locale == source_locale:
+        normalized_target = normalize_locale_code(target_locale) or target_locale
+        if normalized_target == source_locale:
             continue
         for src_res in source_resources:
             try:

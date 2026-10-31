@@ -152,6 +152,11 @@ def _display_name_for_locale(locale_code: str) -> str:
     return _LOCALE_DISPLAY_NAMES.get(language_code, canonical)
 
 
+def _is_generated_output_path(path: Path) -> bool:
+    """Ignore generated translation output directories when scanning a project tree."""
+    return any(part == ".poliglota_translated" for part in path.parts)
+
+
 def _iter_resource_files(root: Path, format_name: str) -> list[Path]:
     """Return all files pertaining to a given format in the project tree."""
     if not root.exists():
@@ -160,7 +165,10 @@ def _iter_resource_files(root: Path, format_name: str) -> list[Path]:
     suffixes = _XML_SUFFIXES.get(format_name.lower(), (f".{format_name.lower()}",))
     files: list[Path] = []
     for suffix in suffixes:
-        files.extend(sorted(root.rglob(f"*{suffix}")))
+        for path in sorted(root.rglob(f"*{suffix}")):
+            if _is_generated_output_path(path):
+                continue
+            files.append(path)
 
     if format_name.lower() == "json":
         files = [

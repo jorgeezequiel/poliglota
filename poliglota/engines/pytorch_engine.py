@@ -489,8 +489,12 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
 
         generation_kwargs: dict[str, Any] = {
             "num_beams": 4,
-            "max_new_tokens": 512,
+            "max_new_tokens": 128,
             "do_sample": False,
+            "repetition_penalty": 1.15,
+            "no_repeat_ngram_size": 3,
+            "length_penalty": 1.0,
+            "early_stopping": True,
         }
 
         if self._is_mbart_model():

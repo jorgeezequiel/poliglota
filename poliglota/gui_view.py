@@ -524,18 +524,22 @@ class GuiView:
         )
 
         output_frame = ttk.Frame(main_frame)
-        output_frame.pack(fill=tk.BOTH, expand=True)
+        output_frame.pack(fill=tk.X, expand=False)
+        output_scrollbar = tk.Scrollbar(output_frame, orient=tk.VERTICAL)
         self.output_text = tk.Text(
             output_frame,
             width=120,
-            height=18,
+            height=12,
             wrap=tk.WORD,
             relief=tk.FLAT,
             highlightthickness=1,
             padx=8,
             pady=6,
+            yscrollcommand=output_scrollbar.set,
         )
-        self.output_text.pack(fill=tk.BOTH, expand=True)
+        output_scrollbar.configure(command=self.output_text.yview)
+        self.output_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=False)
+        output_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.output_text.insert(
             tk.END,
             "Poliglota pronto. Use a CLI ou a GUI para validar, "

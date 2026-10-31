@@ -92,6 +92,7 @@ COMMAND_REQUIREMENTS: dict[str, tuple[str, ...]] = {
 
 #: Maximum time (seconds) a CLI command may run before being killed.
 COMMAND_TIMEOUT_SECONDS = 300
+PROJECT_COMMAND_TIMEOUT_SECONDS = 1800
 
 #: How often (ms) the status line refreshes the running operation's elapsed time.
 ELAPSED_INTERVAL_MS = 200
@@ -132,6 +133,23 @@ def enable_high_dpi() -> bool:
     return _apply_windows_dpi_awareness()
 
 
+def _locale_root(locale: str | None) -> str:
+    """Return the base language code, ignoring region variants like ``pt_BR``."""
+    value = normalize_locale_code(locale) or (locale or "")
+    return value.split("_", 1)[0].lower()
+
+
+def _locales_match(left: str | None, right: str | None) -> bool:
+    """Treat ``pt`` and ``pt_BR`` as the same language family in resolution logic."""
+    if left is None or right is None:
+        return (left is None and right is None) or not left and not right
+    left_value = normalize_locale_code(left) or left
+    right_value = normalize_locale_code(right) or right
+    if left_value == right_value:
+        return True
+    return _locale_root(left_value) == _locale_root(right_value)
+
+
 class _CommandRunner:
     """Own the subprocess lifecycle, including timeout and job-object teardown."""
 
@@ -167,8 +185,11 @@ class _CommandRunner:
         if self.app.cancel_requested:
             self.app.terminate_process()
         timed_out = threading.Event()
+        timeout_seconds = COMMAND_TIMEOUT_SECONDS
+        if argv and argv[0] == "translate-project":
+            timeout_seconds = PROJECT_COMMAND_TIMEOUT_SECONDS
         timer = threading.Timer(
-            COMMAND_TIMEOUT_SECONDS,
+            timeout_seconds,
             self.app.handle_timeout,
             args=(process, timed_out),
         )
@@ -1095,8 +1116,10 @@ class PoliglotaGUI:
             msg = "Informe origem e destino antes de resolver o modelo padrão."
             raise ValueError(msg)
 
+        source_root = _locale_root(normalized)
+        target_root = _locale_root(target)
         try:
-            resolved = resolve_shared_default_model(normalized, target)
+            resolved = resolve_shared_default_model(source_root, target_root)
         except ValueError as exc:
             msg = (
                 f"Nenhum modelo compatível com {normalized} -> {target}. "
@@ -1104,7 +1127,7 @@ class PoliglotaGUI:
             )
             raise ValueError(msg) from exc
 
-        if resolved == "facebook/m2m100_418M" and normalized.lower().startswith("pt") and target.lower().startswith("ja"):
+        if source_root == "pt" and target_root == "ja":
             return "facebook/nllb-200-distilled-600M"
         return resolved
 
@@ -1114,9 +1137,15 @@ class PoliglotaGUI:
         targets: list[str],
     ) -> str | None:
         """Resolve the default model for a multi-target project command."""
+        normalized_source = _locale_root(source_value)
+        normalized_targets = [
+            target for target in targets if target and _locale_root(target) != normalized_source
+        ]
+        if not normalized_targets:
+            return None
         candidate_map = build_translation_plan(
-            source_value,
-            targets,
+            normalized_source,
+            normalized_targets,
             device=self.device_var.get().strip() if self.device_var is not None else "auto",
         )
         models = {step.model for step in candidate_map.steps if step.model}
@@ -1317,28 +1346,56 @@ class PoliglotaGUI:
         normalized_target = normalize_locale_code(target_value) or target_value
 
         candidates = [normalize_locale_code(code) or code for code in by_locale]
-        if normalized_target and normalized_target in candidates:
-            non_target = [code for code in candidates if code != normalized_target]
+
+        if normalized_target:
+            non_target = [code for code in candidates if not _locales_match(code, normalized_target)]
             if non_target:
                 chosen = non_target[0]
                 if self.source_var is not None and chosen != preferred:
                     self.source_var.set(chosen)
+                    self._set_status(f"Fonte detectada: {chosen}")
                 return chosen
 
-        if normalized_preferred and normalized_preferred in by_locale:
-            return normalized_preferred
+        if normalized_preferred and normalized_preferred not in {"und", "unknown"}:
+            exact = next((code for code in candidates if normalize_locale_code(code) == normalized_preferred), None)
+            if exact is not None:
+                if self.source_var is not None and self.source_var.get().strip() != exact:
+                    self.source_var.set(exact)
+                    self._set_status(f"Fonte detectada: {exact}")
+                return exact
+            matching = next((code for code in candidates if _locales_match(code, normalized_preferred)), None)
+            if matching is not None:
+                if self.source_var is not None and self.source_var.get().strip() != matching:
+                    self.source_var.set(matching)
+                    self._set_status(f"Fonte detectada: {matching}")
+                return matching
 
-        detection = detect_source_locale(root_value, format_value, adapter=adapter)
-        for candidate in detection.candidates:
+        detected = detect_source_locale(root_value, format_value, adapter=adapter)
+        for candidate in detected.candidates:
             normalized = normalize_locale_code(candidate.locale_code) or candidate.locale_code
-            if normalized in by_locale and normalized != normalized_target:
+            if normalized in by_locale and not _locales_match(normalized, normalized_target):
                 if self.source_var is not None:
                     self.source_var.set(normalized)
+                    self._set_status(f"Fonte detectada: {normalized}")
                 return normalized
 
-        locale_order = sorted(by_locale)
-        chosen = locale_order[0]
-        if self.source_var is not None and chosen != preferred:
+        for code in candidates:
+            if normalized_preferred and _locales_match(code, normalized_preferred):
+                if self.source_var is not None and self.source_var.get().strip() != code:
+                    self.source_var.set(code)
+                    self._set_status(f"Fonte detectada: {code}")
+                return code
+
+        locale_order = sorted(code for code in by_locale if normalize_locale_code(code) not in {"und", "unknown", None})
+        if locale_order:
+            chosen = locale_order[0]
+            if self.source_var is not None and chosen != preferred:
+                self.source_var.set(chosen)
+                self._set_status(f"Fonte detectada: {chosen}")
+            return chosen
+
+        chosen = normalized_preferred or preferred or "und"
+        if self.source_var is not None and self.source_var.get().strip() != chosen:
             self.source_var.set(chosen)
         return chosen
 
@@ -1360,6 +1417,9 @@ class PoliglotaGUI:
                 )
                 raise ValueError(msg)
             model_value = resolved_default
+            if self.model_var is not None:
+                with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                    self.model_var.set(resolved_default)
 
         command = [
             "translate-project",
