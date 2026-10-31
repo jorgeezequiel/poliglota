@@ -29,13 +29,14 @@ except ImportError:  # pragma: no cover - runtime fallback when rich is unavaila
 
 
 def _use_rich_console() -> bool:
-    """Return True when rich output is safe and useful in the current terminal."""
+    """Return True when rich output is available and not explicitly disabled."""
     if Console is None:
         return False
     if os.environ.get("NO_COLOR") is not None:
         return False
-    stream = getattr(sys.stdout, "isatty", lambda: False)()
-    return bool(stream)
+    if os.environ.get("POLIGLOTA_FORCE_RICH", "1").strip().lower() in {"0", "false", "no"}:
+        return False
+    return True
 
 
 def _render_cli_message(
@@ -101,18 +102,24 @@ _DEFAULT_MOTOR_PRIORITY = (
     "Helsinki-NLP/opus-mt-en-es",
     "Helsinki-NLP/opus-mt-en-fr",
     "Helsinki-NLP/opus-mt-tc-big-en-pt",
+    "facebook/nllb-200-distilled-600M",
+    "facebook/m2m100_418M",
 )
 
 _DEFAULT_MOTOR_LANGUAGE_SETS = {
     "Helsinki-NLP/opus-mt-en-es": {"en", "es"},
     "Helsinki-NLP/opus-mt-en-fr": {"en", "fr"},
     "Helsinki-NLP/opus-mt-tc-big-en-pt": {"en", "pt"},
+    "facebook/nllb-200-distilled-600M": {"pt", "ja", "en", "es", "fr", "de", "ko", "it", "ru"},
+    "facebook/m2m100_418M": {"pt", "ja", "en", "es", "fr", "de", "ko", "it", "ru"},
 }
 
 _DEFAULT_MOTOR_DIRECTIONS = {
     "Helsinki-NLP/opus-mt-en-es": ("en", "es"),
     "Helsinki-NLP/opus-mt-en-fr": ("en", "fr"),
     "Helsinki-NLP/opus-mt-tc-big-en-pt": ("en", "pt"),
+    "facebook/nllb-200-distilled-600M": ("pt", "ja"),
+    "facebook/m2m100_418M": ("pt", "ja"),
 }
 
 PHASE_D_BENCHMARKS: dict[str, dict[str, float]] = {

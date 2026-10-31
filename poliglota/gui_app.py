@@ -54,7 +54,11 @@ from .gui_validators import (
     validate_project_path,
     validate_translation_text,
 )
+from .formats.operations import discover_resources
+from .formats.registry_init import get_registry as get_global_registry
+from .language_detection import detect_source_locale, normalize_locale_code
 from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
+from .translation_plan import build_translation_plan
 from .gui_view import (
     MIN_WINDOW_HEIGHT,
     MIN_WINDOW_WIDTH,
@@ -1092,7 +1096,7 @@ class PoliglotaGUI:
             raise ValueError(msg)
 
         try:
-            return resolve_shared_default_model(normalized, target)
+            resolved = resolve_shared_default_model(normalized, target)
         except ValueError as exc:
             msg = (
                 f"Nenhum modelo compatível com {normalized} -> {target}. "
@@ -1100,23 +1104,30 @@ class PoliglotaGUI:
             )
             raise ValueError(msg) from exc
 
+        if resolved == "facebook/m2m100_418M" and normalized.lower().startswith("pt") and target.lower().startswith("ja"):
+            return "facebook/nllb-200-distilled-600M"
+        return resolved
+
     def _resolve_default_model_for_targets(
         self,
         source_value: str,
         targets: list[str],
     ) -> str | None:
         """Resolve the default model for a multi-target project command."""
-        candidates: set[str] = set()
-        for target_value in targets:
-            if not target_value:
-                continue
-            candidate = self._resolve_default_model_for_pair(source_value, target_value)
-            candidates.add(candidate)
-        if not candidates:
+        candidate_map = build_translation_plan(
+            source_value,
+            targets,
+            device=self.device_var.get().strip() if self.device_var is not None else "auto",
+        )
+        models = {step.model for step in candidate_map.steps if step.model}
+        if not models:
             return None
-        if len(candidates) == 1:
-            return next(iter(candidates))
-        return None
+        if len(models) == 1:
+            return next(iter(models))
+        preferred = "facebook/nllb-200-distilled-600M"
+        if preferred in models:
+            return preferred
+        return next(iter(sorted(models)))
 
     def _build_translate_command(self) -> list[str]:
         if self.translation_var is None:
@@ -1285,9 +1296,56 @@ class PoliglotaGUI:
             success_message="Tradução concluída.",
         )
 
+    def _resolve_project_source_locale(self, root_value: Path, format_value: str) -> str:
+        """Resolve the project source locale, avoiding stale values from prior sessions."""
+        preferred = self.source_var.get().strip() if self.source_var is not None else ""
+        normalized_preferred = normalize_locale_code(preferred) or preferred
+        if not root_value.exists() or not root_value.is_dir():
+            return normalized_preferred or preferred
+
+        try:
+            registry = get_global_registry()
+            adapter = registry.get(format_value)
+            by_locale = discover_resources(adapter, root_value)
+        except (KeyError, ValueError):
+            return normalized_preferred or preferred
+
+        if not by_locale:
+            return normalized_preferred or preferred
+
+        target_value = self.target_var.get().strip() if self.target_var is not None else ""
+        normalized_target = normalize_locale_code(target_value) or target_value
+
+        candidates = [normalize_locale_code(code) or code for code in by_locale]
+        if normalized_target and normalized_target in candidates:
+            non_target = [code for code in candidates if code != normalized_target]
+            if non_target:
+                chosen = non_target[0]
+                if self.source_var is not None and chosen != preferred:
+                    self.source_var.set(chosen)
+                return chosen
+
+        if normalized_preferred and normalized_preferred in by_locale:
+            return normalized_preferred
+
+        detection = detect_source_locale(root_value, format_value, adapter=adapter)
+        for candidate in detection.candidates:
+            normalized = normalize_locale_code(candidate.locale_code) or candidate.locale_code
+            if normalized in by_locale and normalized != normalized_target:
+                if self.source_var is not None:
+                    self.source_var.set(normalized)
+                return normalized
+
+        locale_order = sorted(by_locale)
+        chosen = locale_order[0]
+        if self.source_var is not None and chosen != preferred:
+            self.source_var.set(chosen)
+        return chosen
+
     def _build_translate_project_command(self) -> list[str]:
         root_value = self._build_project_root()
-        source_value = self.source_var.get().strip() if self.source_var is not None else ""
+        format_value = self.format_var.get() if self.format_var is not None else "arb"
+        source_value = self._resolve_project_source_locale(root_value, format_value)
         target_value = self._serialize_target_locales()
         targets = [item.strip() for item in target_value.split(",") if item.strip()]
         engine_value = self.engine_var.get().strip() if self.engine_var is not None else "marian"
@@ -1302,7 +1360,6 @@ class PoliglotaGUI:
                 )
                 raise ValueError(msg)
             model_value = resolved_default
-        format_value = self.format_var.get() if self.format_var is not None else "arb"
 
         command = [
             "translate-project",

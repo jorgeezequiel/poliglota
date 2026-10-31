@@ -46,6 +46,11 @@ def test_select_default_motor_supported_direction() -> None:
 
 
 @pytest.mark.unit
+def test_select_default_motor_pt_to_ja_prefers_nllb() -> None:
+    assert cli_module._select_default_motor("pt_BR", "ja_JP") == "facebook/nllb-200-distilled-600M"
+
+
+@pytest.mark.unit
 def test_select_default_motor_rejects_reverse_direction() -> None:
     with pytest.raises(ValueError, match="Unsupported default motor pair"):
         cli_module._select_default_motor("pt_BR", "en_US")

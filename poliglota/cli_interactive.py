@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rich.console import Console
+from rich.panel import Panel
+
 from poliglota import cli, gpu
 from poliglota.formats.operations import discover_resources
 from poliglota.formats.registry_init import get_registry as get_global_registry
 from poliglota.language_detection import detect_source_locale, normalize_locale_code
 from poliglota.translation_workflow import translate_resource_files
+
+_console = Console(stderr=False, force_terminal=True)
 
 
 class InteractiveCancelledError(Exception):
@@ -51,17 +56,7 @@ def _prompt_yes_no(prompt: str, default: bool = False) -> bool:
         if value in false_values:
             return False
 
-        invalid_prompt = f"{prompt} ({default_str}) [s/n]: "
-        try:
-            value = input(invalid_prompt).strip().lower()
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise InteractiveCancelledError from exc
-
-        if value in true_values:
-            return True
-        if value in false_values:
-            return False
-        return default
+        print(f"Entrada inválida. Use s/Sim ou n/Não. [{default_str}]")
 
 
 def _prompt_choice(prompt: str, choices: list[str], default: int = 0) -> int:
@@ -91,31 +86,13 @@ def _prompt_choice(prompt: str, choices: list[str], default: int = 0) -> int:
         try:
             selected = int(raw_value)
         except ValueError:
-            return default_index
+            print(f"Entrada inválida. Digite um número entre 1 e {len(choices)}.")
+            continue
 
         if 1 <= selected <= len(choices):
             return selected - 1
 
-        retry_prompt = (
-            f"{prompt}\n{choices_text}\n"
-            f"Escolha [1-{len(choices)}] (opção inválida, padrão {default_index + 1}): "
-        )
-        try:
-            value = input(retry_prompt).strip()
-        except (EOFError, KeyboardInterrupt) as exc:
-            raise InteractiveCancelledError from exc
-
-        if value == "":
-            return default_index
-
-        try:
-            selected = int(value)
-        except ValueError:
-            return default_index
-
-        if 1 <= selected <= len(choices):
-            return selected - 1
-        return default_index
+        print(f"Opção fora do intervalo. Digite um número entre 1 e {len(choices)}.")
 
 
 def run_interactive() -> int:

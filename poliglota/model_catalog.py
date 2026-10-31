@@ -9,7 +9,7 @@ _MODEL_CATALOG: Final[dict[str, set[tuple[str, str]]]] = {
     "Helsinki-NLP/opus-mt-en-es": {("en", "es"), ("es", "en")},
     "Helsinki-NLP/opus-mt-en-fr": {("en", "fr"), ("fr", "en")},
     "Helsinki-NLP/opus-mt-tc-big-en-pt": {("en", "pt"), ("pt", "en")},
-    "facebook/m2m100_418M": {
+    "facebook/nllb-200-distilled-600M": {
         ("en", "es"),
         ("es", "en"),
         ("en", "fr"),
@@ -31,7 +31,7 @@ _MODEL_CATALOG: Final[dict[str, set[tuple[str, str]]]] = {
         ("pt", "ru"),
         ("ru", "pt"),
     },
-    "facebook/nllb-200-distilled-600M": {
+    "facebook/m2m100_418M": {
         ("en", "es"),
         ("es", "en"),
         ("en", "fr"),
@@ -55,6 +55,14 @@ _MODEL_CATALOG: Final[dict[str, set[tuple[str, str]]]] = {
     },
 }
 
+_MODEL_PRIORITY: Final[tuple[str, ...]] = (
+    "Helsinki-NLP/opus-mt-en-es",
+    "Helsinki-NLP/opus-mt-en-fr",
+    "Helsinki-NLP/opus-mt-tc-big-en-pt",
+    "facebook/nllb-200-distilled-600M",
+    "facebook/m2m100_418M",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ModelCompatibility:
@@ -77,15 +85,15 @@ def _normalize_lang_code(value: str | None) -> str:
 
 
 def resolve_default_model_for_pair(source_lang: str, target_lang: str) -> str:
-    """Return the default model for a language pair using the current project catalog."""
+    """Return the preferred default model for a language pair using catalog priority."""
     source = _normalize_lang_code(source_lang)
     target = _normalize_lang_code(target_lang)
     if not source or not target:
         msg = f"Unsupported default motor pair: '{source_lang}' -> '{target_lang}'."
         raise ValueError(msg)
 
-    for model, supported_pairs in _MODEL_CATALOG.items():
-        if (source, target) in supported_pairs:
+    for model in _MODEL_PRIORITY:
+        if (source, target) in _MODEL_CATALOG.get(model, set()):
             return model
 
     msg = (

@@ -56,6 +56,16 @@ _SUPPORTED_PAIRS: list[tuple[str, str]] = [
     ("es", "pt"),
     ("pt", "fr"),
     ("fr", "pt"),
+    ("pt", "de"),
+    ("de", "pt"),
+    ("pt", "ja"),
+    ("ja", "pt"),
+    ("pt", "ko"),
+    ("ko", "pt"),
+    ("pt", "it"),
+    ("it", "pt"),
+    ("pt", "ru"),
+    ("ru", "pt"),
 ]
 
 
@@ -394,9 +404,16 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             raise
 
     def _prepare_texts(self, texts: list[str], source_lang: str, target_lang: str) -> list[str]:
-        """Prepare the input strings for model generation."""
+        """Prepare the input strings for model generation.
+
+        Keep the user-selected locale identifiers in the prompt text for clarity,
+        while still normalizing the underlying language codes only for engine
+        compatibility checks and model-specific token resolution.
+        """
         normalized_source = self._normalize_lang_code(source_lang)
         normalized_target = self._normalize_lang_code(target_lang)
+        source_label = str(source_lang).strip()
+        target_label = str(target_lang).strip()
         prepared: list[str] = []
         for text in texts:
             value = str(text).strip()
@@ -405,7 +422,9 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             if self._is_mbart_model() or self._is_nllb_model():
                 prepared.append(value)
             else:
-                prepared.append(f"translate {normalized_source} to {normalized_target}: {value}")
+                prepared.append(
+                    f"translate {source_label or normalized_source} to {target_label or normalized_target}: {value}"
+                )
         return prepared
 
     def _generate_batch(self, texts: list[str], source_lang: str, target_lang: str) -> list[str]:

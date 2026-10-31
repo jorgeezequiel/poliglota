@@ -151,6 +151,42 @@ def test_gui_translate_command_uses_user_text() -> None:
 
 
 @pytest.mark.unit
+def test_gui_default_model_uses_shared_translation_plan() -> None:
+    app = build_gui_app(project_root=Path("C:/temp"), headless=True)
+    app.source_var = DummyVar("pt_BR")
+    app.target_var = DummyVar("en_US")
+    app.model_var = DummyVar("")
+    app.device_var = DummyVar("cpu")
+
+    assert app._resolve_default_model_for_pair("pt_BR", "en_US") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+    assert app._resolve_default_model_for_targets("pt_BR", ["en_US"]) == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+
+
+@pytest.mark.unit
+def test_gui_project_source_is_revalidated_from_project_files(tmp_path: Path) -> None:
+    project = tmp_path / "l10n"
+    project.mkdir()
+    source = project / "pt_BR.json"
+    source.write_text('{"hello": "olá"}', encoding="utf-8")
+    target = project / "en_US.json"
+    target.write_text('{"hello": "hello"}', encoding="utf-8")
+
+    app = build_gui_app(project_root=tmp_path, headless=True)
+    app.project_var = DummyVar(str(project))
+    app.source_var = DummyVar("en_US")
+    app.format_var = DummyVar("json")
+    app.target_var = DummyVar("en_US")
+    app.model_var = DummyVar("")
+    app.device_var = DummyVar("cpu")
+
+    resolved_source = app._resolve_project_source_locale(project, "json")
+    assert resolved_source == "pt_BR"
+    built = app._build_translate_project_command()
+    assert "--source" in built
+    assert built[built.index("--source") + 1] == "pt_BR"
+
+
+@pytest.mark.unit
 def test_gui_operation_state_prevents_overlap() -> None:
     app = build_gui_app(project_root=Path("C:/temp"), headless=True)
     widget = DummyWidget()
