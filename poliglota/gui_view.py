@@ -29,6 +29,8 @@ from .gui_config import (
     DEVICE_CHOICES,
     ENGINE_CHOICES,
     FORMAT_CHOICES,
+    LOCALE_CHOICES,
+    MODEL_CHOICES,
     THEME_CHOICES,
 )
 
@@ -374,6 +376,7 @@ class GuiView:
         self._actions: GuiActions | None = None
         self._translation_variable: object | None = None
         self._drop_target: object | None = None
+        self._target_list_frame: ttk.Frame | None = None
 
     def build(
         self,
@@ -397,6 +400,7 @@ class GuiView:
         self.translation_text = None
         self.preset_combo = None
         self._drop_target = None
+        self._target_list_frame = None
 
         main_frame = ttk.Frame(root, padding=14)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -584,24 +588,108 @@ class GuiView:
         self._add_tooltip(format_combo, "Formato dos arquivos de tradução do projeto.")
 
         ttk.Label(form, text="Origem:").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        source_combo = ttk.Combobox(
+            form,
+            textvariable=variables.source,
+            values=list(LOCALE_CHOICES),
+            state="readonly",
+            width=14,
+        )
         self._register_entry(
             "source",
-            ttk.Entry(form, textvariable=variables.source),
+            source_combo,
             row=2,
             column=1,
             sticky="ew",
-            tooltip="Idioma de origem, por exemplo pt_BR.",
+            tooltip="Idioma de origem. Escolha um único valor.",
+            combo=True,
         )
 
         ttk.Label(form, text="Destino:").grid(row=2, column=2, sticky="w", padx=(0, 8), pady=4)
-        self._register_entry(
-            "target",
-            ttk.Entry(form, textvariable=variables.target),
-            row=2,
-            column=3,
-            sticky="ew",
-            tooltip="Idioma de destino, por exemplo en_US.",
+        target_selector = ttk.Frame(form)
+        target_selector.grid(row=2, column=3, sticky="ew", padx=(0, 8), pady=4)
+        self._target_list_frame = ttk.Frame(target_selector)
+        self._target_list_frame.pack(fill=tk.X, pady=(0, 4))
+
+        def append_target_locale(selected_locale: str | None = None) -> None:
+            locale = (selected_locale or str(target_combo.get())).strip()
+            if not locale:
+                return
+            raw = str(variables.target.get()).strip()
+            selected = [part.strip() for part in raw.split(",") if part.strip()]
+            if locale not in selected:
+                selected.append(locale)
+            variables.target.set(",".join(selected))
+            _refresh_target_pills()
+
+        def clear_target_locales() -> None:
+            variables.target.set("")
+            _refresh_target_pills()
+
+        def remove_target_locale(value: str) -> None:
+            selected = [
+                part.strip() for part in str(variables.target.get()).split(",") if part.strip()
+            ]
+            filtered = [item for item in selected if item != value]
+            variables.target.set(",".join(filtered))
+            _refresh_target_pills()
+
+        def _refresh_target_pills() -> None:
+            frame = self._target_list_frame
+            if frame is None:
+                return
+            for child in frame.winfo_children():
+                with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                    child.destroy()
+            selected = [
+                part.strip() for part in str(variables.target.get()).split(",") if part.strip()
+            ]
+            if not selected:
+                label = ttk.Label(
+                    frame,
+                    text="Nenhum destino selecionado",
+                    style="Muted.TLabel",
+                )
+                label.pack(anchor="w")
+                return
+            for locale in selected:
+                pill = ttk.Frame(frame, padding=(8, 4), style="TargetChip.TFrame")
+                pill.pack(anchor="w", pady=3, padx=0)
+                ttk.Label(pill, text=f"{locale}", style="TLabel").pack(side=tk.LEFT)
+                close_button = ttk.Button(
+                    pill,
+                    text="x",
+                    width=2,
+                    command=lambda current=locale: remove_target_locale(current),
+                )
+                close_button.pack(side=tk.LEFT, padx=(6, 0))
+                self.interactive_widgets.append(close_button)
+                self._add_tooltip(close_button, f"Remover destino {locale}.")
+
+        target_combo = ttk.Combobox(
+            target_selector,
+            values=list(LOCALE_CHOICES),
+            state="readonly",
+            width=14,
         )
+        target_combo.pack(fill=tk.X, pady=(0, 4))
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            target_combo.bind(
+                "<<ComboboxSelected>>",
+                self._event_handler(lambda: append_target_locale(str(target_combo.get()))),
+            )
+
+        buttons = ttk.Frame(target_selector)
+        buttons.pack(fill=tk.X)
+        clear_button = ttk.Button(buttons, text="Limpar", command=clear_target_locales)
+        clear_button.pack(side=tk.LEFT)
+
+        self.field_widgets["target"] = target_combo
+        self.combo_fields.add("target")
+        self.interactive_widgets.extend((target_combo, clear_button))
+        self._add_tooltip(target_combo, "Selecione um idioma para adicioná-lo aos destinos.")
+        self._add_tooltip(clear_button, "Remove todos os idiomas de destino selecionados.")
+        _refresh_target_pills()
 
         ttk.Label(form, text="Texto:").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
         self._build_translation_text(form, variables)
@@ -631,14 +719,26 @@ class GuiView:
         self._add_tooltip(device_combo, "Dispositivo de execução (auto, cpu, cuda, mps, gpu).")
 
         ttk.Label(form, text="Modelo:").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=4)
+        model_combo = ttk.Combobox(
+            form,
+            textvariable=variables.model,
+            values=list(MODEL_CHOICES),
+            state="normal",
+            width=40,
+        )
+        model_combo.set("Padrão do motor")
         self._register_entry(
             "model",
-            ttk.Entry(form, textvariable=variables.model),
+            model_combo,
             row=5,
             column=1,
             columnspan=3,
             sticky="ew",
-            tooltip="Modelo opcional; vazio usa o padrão do motor.",
+            tooltip=(
+                "Modelo opcional. Se permanecer em 'Padrão do motor', o sistema "
+                "usa o modelo recomendado automaticamente."
+            ),
+            combo=True,
         )
 
         sync_toggle = ttk.Checkbutton(
@@ -861,6 +961,7 @@ class GuiView:
             style.configure("Ok.TLabel", background=theme.background, foreground=theme.success)
             style.configure("Error.TLabel", background=theme.background, foreground=theme.error)
             style.configure("TButton", padding=(10, 4))
+            style.configure("TargetChip.TFrame", background=theme.surface, bordercolor=theme.border)
             style.configure(
                 "Accent.TButton",
                 background=theme.accent,

@@ -29,6 +29,8 @@ except ImportError as exc:  # pragma: no cover - platform-specific fallback
     msg = "Tkinter is required for the Poliglota GUI."
     raise RuntimeError(msg) from exc
 
+from poliglota import cli as cli_module
+
 from . import __version__
 from .gui_config import (
     DEFAULT_THEME,
@@ -774,6 +776,9 @@ class PoliglotaGUI:
 
     def _collect_validation_results(self) -> dict[str, ValidationResult]:
         """Validate the fields that every command depends on."""
+        model_value = self._var_value(self.model_var)
+        if model_value == "Padrão do motor":
+            model_value = ""
         return {
             "project": validate_project_path(self._var_value(self.project_var)),
             "source": validate_locale(
@@ -784,7 +789,7 @@ class PoliglotaGUI:
                 self._var_value(self.target_var),
                 label=FIELD_LABELS["target"],
             ),
-            "model": validate_model_name(self._var_value(self.model_var)),
+            "model": validate_model_name(model_value),
         }
 
     def _refresh_validation(self) -> None:
@@ -1077,6 +1082,76 @@ class PoliglotaGUI:
             return self.project_root
         return Path(raw_value)
 
+    def _resolve_default_model_for_pair(self, source_value: str, target_value: str) -> str:
+        """Resolve the GUI default model for a locale pair.
+
+        The CLI exposes a strict pair map, but the GUI is a friendlier wrapper: if the
+        pair is not covered by the default CLI logic, the GUI falls back to a broader
+        compatibility map and only then raises an actionable message.
+        """
+        normalized = (source_value or "").strip()
+        target = (target_value or "").strip()
+        if not normalized or not target:
+            msg = "Informe origem e destino antes de resolver o modelo padrão."
+            raise ValueError(msg)
+
+        source_code = normalized.split("_", 1)[0].lower()
+        target_code = target.split("_", 1)[0].lower()
+        preferred_pairs = {
+            "Helsinki-NLP/opus-mt-en-es": {("en", "es"), ("es", "en")},
+            "Helsinki-NLP/opus-mt-en-fr": {("en", "fr"), ("fr", "en")},
+            "Helsinki-NLP/opus-mt-tc-big-en-pt": {("en", "pt"), ("pt", "en")},
+            "facebook/nllb-200-distilled-600M": {
+                ("en", "es"),
+                ("es", "en"),
+                ("en", "fr"),
+                ("fr", "en"),
+                ("en", "pt"),
+                ("pt", "en"),
+                ("pt", "es"),
+                ("es", "pt"),
+                ("pt", "fr"),
+                ("fr", "pt"),
+                ("pt", "de"),
+                ("pt", "ja"),
+                ("pt", "ko"),
+                ("pt", "it"),
+                ("pt", "ru"),
+                ("pt", "pl"),
+            },
+        }
+
+        for model_name, supported_pairs in preferred_pairs.items():
+            if (source_code, target_code) in supported_pairs:
+                return model_name
+
+        try:
+            return cli_module.select_default_motor(normalized, target)
+        except ValueError as exc:
+            msg = (
+                f"Nenhum modelo compatível com {normalized} -> {target}. "
+                "Escolha um modelo manualmente ou remova esse destino."
+            )
+            raise ValueError(msg) from exc
+
+    def _resolve_default_model_for_targets(
+        self,
+        source_value: str,
+        targets: list[str],
+    ) -> str | None:
+        """Resolve the default model for a multi-target project command."""
+        candidates: set[str] = set()
+        for target_value in targets:
+            if not target_value:
+                continue
+            candidate = self._resolve_default_model_for_pair(source_value, target_value)
+            candidates.add(candidate)
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return next(iter(candidates))
+        return None
+
     def _build_translate_command(self) -> list[str]:
         if self.translation_var is None:
             msg = "Informe o texto para tradução."
@@ -1092,6 +1167,11 @@ class PoliglotaGUI:
         engine_value = self.engine_var.get().strip() if self.engine_var is not None else "marian"
         device_value = self.device_var.get().strip() if self.device_var is not None else "auto"
         model_value = self.model_var.get().strip() if self.model_var is not None else ""
+        if model_value in {"", "Padrão do motor"}:
+            try:
+                model_value = self._resolve_default_model_for_pair(source_value, target_value)
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
 
         command = [
             "translate",
@@ -1242,10 +1322,20 @@ class PoliglotaGUI:
     def _build_translate_project_command(self) -> list[str]:
         root_value = self._build_project_root()
         source_value = self.source_var.get().strip() if self.source_var is not None else "pt_BR"
-        target_value = self.target_var.get().strip() if self.target_var is not None else "en_US"
+        target_value = self._serialize_target_locales()
+        targets = [item.strip() for item in target_value.split(",") if item.strip()]
         engine_value = self.engine_var.get().strip() if self.engine_var is not None else "marian"
         device_value = self.device_var.get().strip() if self.device_var is not None else "auto"
         model_value = self.model_var.get().strip() if self.model_var is not None else ""
+        if model_value in {"", "Padrão do motor"}:
+            resolved_default = self._resolve_default_model_for_targets(source_value, targets)
+            if resolved_default is None:
+                msg = (
+                    "Nenhum modelo compatível com os destinos selecionados. "
+                    "Escolha um modelo manualmente ou remova os destinos incompatíveis."
+                )
+                raise ValueError(msg)
+            model_value = resolved_default
         format_value = self.format_var.get() if self.format_var is not None else "arb"
 
         command = [
@@ -1266,6 +1356,16 @@ class PoliglotaGUI:
         if model_value:
             command.extend(["--model", model_value])
         return command
+
+    def _serialize_target_locales(self) -> str:
+        """Serialize the GUI target selector into the CLI-compatible comma syntax."""
+        raw = self.target_var.get().strip() if self.target_var is not None else "en_US"
+        if not raw:
+            return "en_US"
+        if "," in raw:
+            values = [part.strip() for part in raw.split(",") if part.strip()]
+            return ",".join(values) if values else "en_US"
+        return raw
 
     def _handle_translate_project(self) -> None:
         if not self._validate_form("translate-project"):

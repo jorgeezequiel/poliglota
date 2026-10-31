@@ -41,6 +41,37 @@ FORMAT_CHOICES: tuple[str, ...] = ("arb", "json", "yaml", "xml")
 ENGINE_CHOICES: tuple[str, ...] = ("marian", "pytorch")
 #: Devices offered by the GUI combobox.
 DEVICE_CHOICES: tuple[str, ...] = ("auto", "cpu", "cuda", "mps", "gpu")
+#: Common locale choices used by the GUI selectors.
+LOCALE_CHOICES: tuple[str, ...] = (
+    "pt_BR",
+    "en_US",
+    "es_ES",
+    "fr_FR",
+    "de_DE",
+    "it_IT",
+    "ja_JP",
+    "ko_KR",
+    "zh_CN",
+    "pt",
+    "en",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "ja",
+    "ko",
+    "zh",
+)
+#: Common translation model choices suggested by the GUI.
+MODEL_CHOICES: tuple[str, ...] = (
+    "",
+    "Helsinki-NLP/opus-mt-en-es",
+    "Helsinki-NLP/opus-mt-en-pt",
+    "Helsinki-NLP/opus-mt-tc-big-en-pt",
+    "facebook/m2m100_418M",
+    "facebook/nllb-200-distilled-600M",
+    "facebook/nllb-200-1.3B",
+)
 #: Visual themes offered by the GUI.
 THEME_CHOICES: tuple[str, ...] = ("light", "dark")
 #: Theme used when nothing was saved yet.

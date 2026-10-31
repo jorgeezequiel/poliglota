@@ -60,14 +60,22 @@ def validate_project_path(value: str) -> ValidationResult:
 
 
 def validate_locale(value: str, *, label: str = "Idioma") -> ValidationResult:
-    """Check a language code such as ``pt``, ``pt_BR`` or ``zh_Hant``."""
+    """Check one locale or a comma-separated list of locales."""
     candidate = value.strip()
     if not candidate:
         return ValidationResult.error(f"{label} é obrigatório.")
-    if len(candidate) > MAX_LOCALE_LENGTH:
-        return ValidationResult.error(f"{label} é longo demais.")
-    if LOCALE_PATTERN.fullmatch(candidate) is None:
+
+    items = [item.strip() for item in candidate.split(",") if item.strip()]
+    if not items:
         return ValidationResult.error(f"{label} inválido. Use o formato: pt_BR, en_US, es…")
+
+    for item in items:
+        if len(item) > MAX_LOCALE_LENGTH:
+            return ValidationResult.error(f"{label} é longo demais.")
+        if LOCALE_PATTERN.fullmatch(item) is None:
+            return ValidationResult.error(
+                f"{label} inválido. Use o formato: pt_BR, en_US, es…",
+            )
 
     return ValidationResult.ok()
 
