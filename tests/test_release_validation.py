@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import io
 import tarfile
+import urllib.error
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from types import TracebackType
 
 import pytest
 
 from scripts.release_validation import (
     assert_project_versions_match,
     classify_release_response,
+    fetch_github_release_state,
     read_project_versions,
     validate_distribution_artifacts,
     validate_tag,
@@ -39,11 +45,11 @@ def test_valid_release_tags(tag: str, expected: str) -> None:
         "v1.2.3-rc.1",
         "v1.2.3+build.1",
         "v1.2.3-",
-        "v\\u0661.\\u0662.\\u0663",
+        "v١.٢.٣",  # noqa: RUF001
     ],
 )
 def test_invalid_release_tags(tag: str) -> None:
-    with pytest.raises(ValueError, match=r"Invalid tag|Tag must use ASCII characters only"):
+    with pytest.raises(ValueError, match=r"Invalid tag|ASCII characters only"):
         validate_tag(tag)
 
 
@@ -137,6 +143,45 @@ def test_distribution_validation_rejects_corrupted_archives(tmp_path: Path) -> N
         validate_distribution_artifacts(dist_dir, "0.0.2")
 
 
+def test_fetch_github_release_state_handles_valid_responses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return self._payload
+
+        def getcode(self) -> int:
+            return 200
+
+        def __enter__(self) -> object:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> None:
+            return None
+
+    def fake_urlopen(request: object, timeout: float) -> FakeResponse:
+        return FakeResponse(b'{"draft": true}')
+
+    monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_urlopen)
+    auth_token = "x"  # noqa: S105
+    assert fetch_github_release_state(
+        "jorgeezequiel/poliglota",
+        "v0.0.2",
+        token=auth_token,
+    ) == (
+        200,
+        {"draft": True},
+    )
+
+
 @pytest.mark.parametrize(
     ("status_code", "payload", "expected"),
     [
@@ -158,3 +203,59 @@ def test_classify_release_response_rejects_errors(status_code: int) -> None:
 def test_classify_release_response_rejects_missing_payload() -> None:
     with pytest.raises(ValueError, match=r"no JSON payload|missing a valid 'draft' flag"):
         classify_release_response(200, None)
+
+
+def test_fetch_github_release_status_handles_error_and_invalid_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeHTTPError(urllib.error.HTTPError):
+        def __init__(self, code: int) -> None:
+            super().__init__(
+                url="https://example.test",
+                code=code,
+                msg="error",
+                hdrs=None,
+                fp=None,
+            )
+
+    def fake_404(request: object, timeout: float) -> None:
+        raise FakeHTTPError(404)
+
+    def fake_500(request: object, timeout: float) -> None:
+        raise FakeHTTPError(500)
+
+    def fake_invalid_json(request: object, timeout: float) -> object:
+        class FakeResponse:
+            def read(self) -> bytes:
+                return b"not-json"
+
+            def getcode(self) -> int:
+                return 200
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> None:
+                return None
+
+        return FakeResponse()
+
+    monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_404)
+    assert fetch_github_release_state("jorgeezequiel/poliglota", "v0.0.2")[0] == 404
+
+    monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_500)
+    try:
+        fetch_github_release_state("jorgeezequiel/poliglota", "v0.0.2")
+    except ValueError:
+        pass
+    else:
+        pytest.fail("fetch_github_release_state should raise ValueError for HTTP 500")
+
+    monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_invalid_json)
+    with pytest.raises(ValueError, match="invalid JSON"):
+        fetch_github_release_state("jorgeezequiel/poliglota", "v0.0.2")

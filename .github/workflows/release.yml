@@ -43,51 +43,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          python - <<'PY'
-          import os
-          import re
-          import sys
-          import tomllib
-          from pathlib import Path
-
-          root = Path('.')
-          tag_name = os.environ['TAG_NAME']
-          semver_pattern = re.compile(
-              r'^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)'
-              r'(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)'
-              r'(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?'
-              r'(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$'
-          )
-
-          if not semver_pattern.fullmatch(tag_name):
-              raise SystemExit(f"Tag '{tag_name}' is not a valid SemVer 2.0.0 tag. Expected format: vMAJOR.MINOR.PATCH")
-
-          version = tag_name[1:]
-          pyproject = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))
-          pyproject_version = str(pyproject['project']['version'])
-          version_file = (root / 'VERSION').read_text(encoding='utf-8').strip()
-          init_text = (root / 'poliglota' / '__init__.py').read_text(encoding='utf-8')
-          match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', init_text, re.MULTILINE)
-          if match is None:
-              raise SystemExit("Unable to parse __version__ from poliglota/__init__.py")
-          init_version = match.group(1)
-
-          expected = {pyproject_version, version_file, init_version}
-          if len(expected) != 1:
-              raise SystemExit(
-                  'Version mismatch detected: '
-                  f'pyproject={pyproject_version}, VERSION={version_file}, __version__={init_version}'
-              )
-
-          if pyproject_version != version:
-              raise SystemExit(
-                  'Tag version does not match project metadata: '
-                  f'tag={version}, pyproject={pyproject_version}'
-              )
-
-          print(f"Validated release version {version}")
-          PY
-
+          python -m scripts.release_validation tag --tag "${TAG_NAME}" --root .
           echo "version=${TAG_NAME#v}" >> "${GITHUB_OUTPUT}"
 
   quality:
@@ -158,60 +114,12 @@ jobs:
 
       - name: Validate wheel and sdist metadata
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.validate-version.outputs.version }}
         run: |
           set -euo pipefail
           python -m twine check dist/*
-          python - <<'PY'
-          import os
-          import re
-          import tarfile
-          import zipfile
-          from pathlib import Path
-
-          version = os.environ['RELEASE_VERSION']
-          dist = Path('dist')
-          wheels = sorted(dist.glob('*.whl'))
-          sdists = sorted(dist.glob('*.tar.gz'))
-
-          if len(wheels) != 1:
-              raise SystemExit(f'Expected exactly one wheel in dist/, found: {wheels}')
-          if len(sdists) != 1:
-              raise SystemExit(f'Expected exactly one source distribution in dist/, found: {sdists}')
-
-          wheel = wheels[0]
-          sdist = sdists[0]
-
-          with zipfile.ZipFile(wheel) as zf:
-              metadata_name = next((name for name in zf.namelist() if name.endswith('.dist-info/METADATA')), None)
-              if metadata_name is None:
-                  raise SystemExit(f'No METADATA file found inside {wheel.name}')
-
-              metadata = zf.read(metadata_name).decode('utf-8')
-              name_match = re.search(r'^Name: (.+)$', metadata, re.MULTILINE)
-              version_match = re.search(r'^Version: (.+)$', metadata, re.MULTILINE)
-              if name_match is None or version_match is None:
-                  raise SystemExit(f'Wheel metadata for {wheel.name} is malformed')
-              if name_match.group(1).strip() != 'poliglota':
-                  raise SystemExit(f'Wheel package name mismatch: {name_match.group(1)!r}')
-              if version_match.group(1).strip() != version:
-                  raise SystemExit(f'Wheel package version mismatch: expected {version}, found {version_match.group(1)!r}')
-
-          with tarfile.open(sdist, mode='r:gz') as tf:
-              pkginfo = next((member for member in tf.getmembers() if member.name.endswith('PKG-INFO')), None)
-              if pkginfo is None:
-                  raise SystemExit(f'No PKG-INFO file found inside {sdist.name}')
-              metadata = tf.extractfile(pkginfo).read().decode('utf-8')
-              name_match = re.search(r'^Name: (.+)$', metadata, re.MULTILINE)
-              version_match = re.search(r'^Version: (.+)$', metadata, re.MULTILINE)
-              if name_match is None or version_match is None:
-                  raise SystemExit(f'SDIST metadata for {sdist.name} is malformed')
-              if name_match.group(1).strip() != 'poliglota':
-                  raise SystemExit(f'SDIST package name mismatch: {name_match.group(1)!r}')
-              if version_match.group(1).strip() != version:
-                  raise SystemExit(f'SDIST package version mismatch: expected {version}, found {version_match.group(1)!r}')
-
-          print(f'Validated wheel and sdist for {version}: {wheel.name}, {sdist.name}')
-          PY
+          python -m scripts.release_validation dist --dist-dir dist --version "${RELEASE_VERSION}"
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -236,7 +144,7 @@ jobs:
           name: python-dist
           path: dist
 
-      - name: Create draft release when absent
+      - name: Check existing GitHub release state
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -244,19 +152,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_state_file="$(mktemp)"
-          if gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft,name,tagName > "${release_state_file}" 2>"${release_state_file}.err"; then
-            echo "A release already exists for ${TAG_NAME}. No new draft will be created."
-            exit 0
-          fi
+          release_state="$(python -m scripts.release_validation release-status \
+            --repo "${GITHUB_REPOSITORY}" \
+            --tag "${TAG_NAME}" \
+            --token "${GH_TOKEN}" 2>&1)"
 
-          if grep -qi "Not Found\|404" "${release_state_file}.err"; then
-            echo "No existing GitHub release found for ${TAG_NAME}. Creating draft release..."
-          else
-            echo "Unable to determine whether a release already exists for ${TAG_NAME}." >&2
-            cat "${release_state_file}.err" >&2
-            exit 1
-          fi
+          case "${release_state}" in
+            *"state: missing")
+              echo "No existing GitHub release found for ${TAG_NAME}. Creating draft release..."
+              ;;
+            *"state: draft")
+              echo "A draft release already exists for ${TAG_NAME}. No changes will be made."
+              exit 0
+              ;;
+            *"state: published")
+              echo "A published release already exists for ${TAG_NAME}. No changes will be made."
+              exit 0
+              ;;
+            *)
+              echo "Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
+              exit 1
+              ;;
+          esac
 
           ls -l dist
 
