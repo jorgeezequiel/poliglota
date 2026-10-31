@@ -42,9 +42,11 @@ def _use_rich_console() -> bool:
         return False
     if os.environ.get("NO_COLOR") is not None:
         return False
-    if os.environ.get("POLIGLOTA_FORCE_RICH", "1").strip().lower() in {"0", "false", "no"}:
-        return False
-    return True
+    return os.environ.get("POLIGLOTA_FORCE_RICH", "1").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+    }
 
 
 def _render_cli_message(
@@ -346,6 +348,11 @@ def _prepare_model_locally(model_name: str, device: str) -> bool:
 
     logger.info("Model %s prepared and cached successfully.", model_name)
     return True
+
+
+def prepare_model_locally(model_name: str, device: str) -> bool:
+    """Public wrapper to prepare a model for local offline use."""
+    return _prepare_model_locally(model_name, device)
 
 
 def _run_prepare_model(args: argparse.Namespace) -> int:
@@ -1306,7 +1313,11 @@ def _run_translate(
                 source,
                 current_target,
                 engine=engine,
-                model=(model if model and str(model).strip() else _select_default_motor(source, current_target)),
+                model=(
+                    model
+                    if model and str(model).strip()
+                    else _select_default_motor(source, current_target)
+                ),
                 device=device,
                 preserve_placeholders=preserve_placeholders,
                 batch_size=batch_size,
@@ -1396,7 +1407,10 @@ def _run_translate_project(args: argparse.Namespace) -> int:
     out_dir = args.output_dir or (Path(args.root) / ".poliglota_translated")
     if out_dir.exists() and any(out_dir.rglob("*")):
         print(
-            f"Warning: output directory '{out_dir}' already contains files; existing translations may be overwritten.",
+            (
+                f"Warning: output directory '{out_dir}' already contains files; "
+                "existing translations may be overwritten."
+            ),
             file=sys.stderr,
         )
 

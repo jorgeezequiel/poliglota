@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from . import gpu
 from .language_detection import DetectionCandidate, detect_source_locale, normalize_locale_code
@@ -37,6 +39,7 @@ class TranslationPlan:
 
     @property
     def has_unsupported_targets(self) -> bool:
+        """Return whether any target language is incompatible with the source model."""
         return any(not step.compatible for step in self.steps)
 
 
@@ -85,7 +88,9 @@ def resolve_model_for_pair(
     if explicit_model and explicit_model.strip():
         model_name = explicit_model.strip()
         candidates = supported_models_for_pair(source, target)
-        compatible = bool(candidates) and (model_name in candidates or model_name in {"facebook/nllb-200-distilled-600M"})
+        compatible = bool(candidates) and (
+            model_name in candidates or model_name == "facebook/nllb-200-distilled-600M"
+        )
         if compatible:
             available = model_available_locally(model_name)
             return TranslationPlanStep(
@@ -96,7 +101,11 @@ def resolve_model_for_pair(
                 available_local=available,
                 compatible=True,
                 status="ready" if available else "missing-local-model",
-                reason="modelo escolhido manualmente" if available else "modelo disponível no catálogo, mas ausente localmente",
+                reason=(
+                    "modelo escolhido manualmente"
+                    if available
+                    else "modelo disponível no catálogo, mas ausente localmente"
+                ),
             )
         return TranslationPlanStep(
             source=source,
@@ -132,7 +141,11 @@ def resolve_model_for_pair(
         available_local=available,
         compatible=True,
         status="ready" if available else "missing-local-model",
-        reason="modelo compatível e disponível localmente" if available else "modelo compatível, mas não instalado localmente",
+        reason=(
+            "modelo compatível e disponível localmente"
+            if available
+            else "modelo compatível, mas não instalado localmente"
+        ),
     )
 
 
@@ -164,7 +177,8 @@ def build_translation_plan(
             warnings.append(f"{step.source} -> {step.target}: {step.reason}")
         elif step.status == "missing-local-model":
             warnings.append(
-                f"{step.source} -> {step.target}: {step.model} está no catálogo, mas não está instalado localmente."
+                f"{step.source} -> {step.target}: {step.model} está no catálogo, "
+                "mas não está instalado localmente."
             )
     return TranslationPlan(
         source=source,

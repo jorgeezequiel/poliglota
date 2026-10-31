@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from rich.console import Console
-from rich.panel import Panel
 
 from poliglota import cli, gpu
 from poliglota.formats.operations import discover_resources
@@ -95,6 +94,11 @@ def _prompt_choice(prompt: str, choices: list[str], default: int = 0) -> int:
         print(f"Opção fora do intervalo. Digite um número entre 1 e {len(choices)}.")
 
 
+def _raise_interactive_value_error(message: str) -> None:
+    """Raise a user-facing validation error from the interactive flow."""
+    raise ValueError(message)
+
+
 def run_interactive() -> int:
     """Run the guided CLI flow for validating and translating locale resources."""
     try:
@@ -103,10 +107,11 @@ def run_interactive() -> int:
         device = devices[dev_idx]
         resolved = cli.resolve_device_name(device)
         if device != "auto" and resolved == "cpu" and device in {"cuda", "mps"}:
-            raise ValueError(
+            msg = (
                 f"O dispositivo '{device}' não está disponível neste ambiente. "
                 "Use CPU ou escolha outra opção."
             )
+            _raise_interactive_value_error(msg)
 
         registry = get_global_registry()
         formats = registry.names()
@@ -120,29 +125,35 @@ def run_interactive() -> int:
         root_str = _prompt_input("Caminho da pasta com arquivos de localização", default=".")
         root = Path(root_str)
         if not root.exists():
-            raise ValueError(f"O caminho '{root}' não existe. Verifique a pasta informada.")
+            msg = f"O caminho '{root}' não existe. Verifique a pasta informada."
+            _raise_interactive_value_error(msg)
         if root.is_file():
-            raise ValueError(
+            msg = (
                 f"O caminho '{root}' aponta para um arquivo, mas a operação espera uma pasta "
                 "com recursos de localização."
             )
+            _raise_interactive_value_error(msg)
 
         adapter = registry.get(format_name)
         by_locale = discover_resources(adapter, root)
         if not by_locale:
             if any(root.rglob(f"*.{format_name}")):
-                raise ValueError(
+                msg = (
                     f"Nenhum locale foi reconhecido em '{root}' para o formato '{format_name}'. "
                     "Verifique a estrutura esperada ou a análise de conteúdo."
                 )
-            raise ValueError(
+                _raise_interactive_value_error(msg)
+            msg = (
                 f"Nenhum arquivo '{format_name}' foi encontrado em '{root}'. "
                 f"Verifique o caminho informado e o formato selecionado ({format_name})."
             )
+            _raise_interactive_value_error(msg)
 
         detection = detect_source_locale(root, format_name, adapter=adapter)
         if detection.inconclusive:
-            print("A detecção de idioma foi inconclusiva. O próximo passo exige confirmação manual.")
+            print(
+                "A detecção de idioma foi inconclusiva. O próximo passo exige confirmação manual."
+            )
 
         locale_candidates = [
             normalize_locale_code(candidate.locale_code) or candidate.locale_code
@@ -153,7 +164,8 @@ def run_interactive() -> int:
         else:
             locales_list = sorted(by_locale.keys())
         if not locales_list:
-            raise ValueError("Nenhum idioma foi encontrado para esta pasta.")
+            msg = "Nenhum idioma foi encontrado para esta pasta."
+            _raise_interactive_value_error(msg)
         src_idx = _prompt_choice("Selecione o idioma de origem:", locales_list, default=0)
         source_locale = locales_list[src_idx]
 
@@ -164,9 +176,10 @@ def run_interactive() -> int:
             if _prompt_yes_no(f"Traduzir para {loc}?"):
                 target_locales.append(loc)
         if not target_locales:
-            raise ValueError(
+            msg = (
                 "Nenhum idioma de destino selecionado. É necessário escolher pelo menos um destino."
             )
+            _raise_interactive_value_error(msg)
 
         default_model = cli.select_default_motor(source_locale, target_locales[0])
         use_default = _prompt_yes_no("Usar modelo padrão sugerido?", default=True)
@@ -188,7 +201,7 @@ def run_interactive() -> int:
                 print("Preparação cancelada. Nenhum modelo foi baixado.")
                 return 0
             try:
-                cli._prepare_model_locally(model, resolved)
+                cli.prepare_model_locally(model, resolved)
             except RuntimeError as exc:
                 print(f"Erro: {exc}")
                 return 1

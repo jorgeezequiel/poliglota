@@ -270,8 +270,7 @@ def _fallback_scores(text: str) -> dict[str, float]:
     hints: dict[str, float] = {}
 
     if any(
-        token in text_lower
-        for token in ("olá", "você", "não", "obrigado", "bom dia", "tudo bem")
+        token in text_lower for token in ("olá", "você", "não", "obrigado", "bom dia", "tudo bem")
     ):
         hints["pt"] = 0.7
     if any(token in text_lower for token in ("hello", "world", "welcome", "please", "thanks")):

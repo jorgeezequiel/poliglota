@@ -6,7 +6,6 @@ They provide the core business logic that the CLI and other consumers need.
 
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -67,7 +66,7 @@ def _resource_group_key(resource: Any) -> str:
 
     path = getattr(resource, "path", None)
     if path is not None:
-        candidate = path.parent.name if path.parent.name else path.stem
+        candidate = path.parent.name or path.stem
         if candidate and candidate not in {".", ""}:
             return candidate
     return "default"
@@ -237,7 +236,9 @@ def sync_with_adapter(
     all_resources = [r for resources in by_locale.values() for r in resources]
 
     for target_resource in all_resources:
-        target_key = normalize_locale_code(target_resource.locale.code) or target_resource.locale.code
+        target_key = (
+            normalize_locale_code(target_resource.locale.code) or target_resource.locale.code
+        )
         if target_key == source_key:
             continue
 

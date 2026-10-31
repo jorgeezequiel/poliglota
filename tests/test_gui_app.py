@@ -158,8 +158,13 @@ def test_gui_default_model_uses_shared_translation_plan() -> None:
     app.model_var = DummyVar("")
     app.device_var = DummyVar("cpu")
 
-    assert app._resolve_default_model_for_pair("pt_BR", "en_US") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
-    assert app._resolve_default_model_for_targets("pt_BR", ["en_US"]) == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+    assert (
+        app._resolve_default_model_for_pair("pt_BR", "en_US") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+    )
+    assert (
+        app._resolve_default_model_for_targets("pt_BR", ["en_US"])
+        == "Helsinki-NLP/opus-mt-tc-big-en-pt"
+    )
 
 
 @pytest.mark.unit

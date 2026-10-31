@@ -423,7 +423,8 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
                 prepared.append(value)
             else:
                 prepared.append(
-                    f"translate {source_label or normalized_source} to {target_label or normalized_target}: {value}"
+                    f"translate {source_label or normalized_source} to "
+                    f"{target_label or normalized_target}: {value}"
                 )
         return prepared
 

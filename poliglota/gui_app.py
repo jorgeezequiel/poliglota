@@ -29,9 +29,9 @@ except ImportError as exc:  # pragma: no cover - platform-specific fallback
     msg = "Tkinter is required for the Poliglota GUI."
     raise RuntimeError(msg) from exc
 
-from poliglota import cli as cli_module
-
 from . import __version__
+from .formats.operations import discover_resources
+from .formats.registry_init import get_registry as get_global_registry
 from .gui_config import (
     DEFAULT_THEME,
     RECENT_PROJECTS_LIMIT,
@@ -54,11 +54,6 @@ from .gui_validators import (
     validate_project_path,
     validate_translation_text,
 )
-from .formats.operations import discover_resources
-from .formats.registry_init import get_registry as get_global_registry
-from .language_detection import detect_source_locale, normalize_locale_code
-from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
-from .translation_plan import build_translation_plan
 from .gui_view import (
     MIN_WINDOW_HEIGHT,
     MIN_WINDOW_WIDTH,
@@ -67,6 +62,9 @@ from .gui_view import (
     GuiView,
     configure_dpi_scaling,
 )
+from .language_detection import detect_source_locale, normalize_locale_code
+from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
+from .translation_plan import build_translation_plan
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +140,7 @@ def _locale_root(locale: str | None) -> str:
 def _locales_match(left: str | None, right: str | None) -> bool:
     """Treat ``pt`` and ``pt_BR`` as the same language family in resolution logic."""
     if left is None or right is None:
-        return (left is None and right is None) or not left and not right
+        return (left is None and right is None) or (not left and not right)
     left_value = normalize_locale_code(left) or left
     right_value = normalize_locale_code(right) or right
     if left_value == right_value:
@@ -1348,7 +1346,9 @@ class PoliglotaGUI:
         candidates = [normalize_locale_code(code) or code for code in by_locale]
 
         if normalized_target:
-            non_target = [code for code in candidates if not _locales_match(code, normalized_target)]
+            non_target = [
+                code for code in candidates if not _locales_match(code, normalized_target)
+            ]
             if non_target:
                 chosen = non_target[0]
                 if self.source_var is not None and chosen != preferred:
@@ -1357,13 +1357,23 @@ class PoliglotaGUI:
                 return chosen
 
         if normalized_preferred and normalized_preferred not in {"und", "unknown"}:
-            exact = next((code for code in candidates if normalize_locale_code(code) == normalized_preferred), None)
+            exact = next(
+                (
+                    code
+                    for code in candidates
+                    if normalize_locale_code(code) == normalized_preferred
+                ),
+                None,
+            )
             if exact is not None:
                 if self.source_var is not None and self.source_var.get().strip() != exact:
                     self.source_var.set(exact)
                     self._set_status(f"Fonte detectada: {exact}")
                 return exact
-            matching = next((code for code in candidates if _locales_match(code, normalized_preferred)), None)
+            matching = next(
+                (code for code in candidates if _locales_match(code, normalized_preferred)),
+                None,
+            )
             if matching is not None:
                 if self.source_var is not None and self.source_var.get().strip() != matching:
                     self.source_var.set(matching)
@@ -1386,7 +1396,11 @@ class PoliglotaGUI:
                     self._set_status(f"Fonte detectada: {code}")
                 return code
 
-        locale_order = sorted(code for code in by_locale if normalize_locale_code(code) not in {"und", "unknown", None})
+        locale_order = sorted(
+            code
+            for code in by_locale
+            if normalize_locale_code(code) not in {"und", "unknown", None}
+        )
         if locale_order:
             chosen = locale_order[0]
             if self.source_var is not None and chosen != preferred:

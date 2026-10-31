@@ -114,7 +114,11 @@ def supported_models_for_pair(source_lang: str, target_lang: str) -> list[str]:
     return models
 
 
-def validate_model_compatibility(model: str, source_lang: str, target_lang: str) -> ModelCompatibility:
+def validate_model_compatibility(
+    model: str,
+    source_lang: str,
+    target_lang: str,
+) -> ModelCompatibility:
     """Check whether a model is compatible with a given language pair."""
     source = _normalize_lang_code(source_lang)
     target = _normalize_lang_code(target_lang)
