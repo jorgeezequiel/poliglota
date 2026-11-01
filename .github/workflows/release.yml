@@ -193,6 +193,38 @@ jobs:
             exit 1
           fi
 
+      - name: Diagnose GitHub API access (on validation failure)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set +e  # Don't exit on errors in diagnostic commands
+          
+          echo "=== GitHub Release API Diagnostics ==="
+          echo "Repository: ${GITHUB_REPOSITORY}"
+          echo "Tag: ${TAG_NAME}"
+          echo ""
+          
+          echo "=== Current Job Permissions ==="
+          echo "Expected: contents:write, metadata:read"
+          echo "Note: Actual permissions are set in job definition (should show contents:write)"
+          echo ""
+          
+          echo "=== Test 1: Direct gh CLI Query ==="
+          gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" 2>&1 || echo "(expected to fail if release doesn't exist)"
+          echo ""
+          
+          echo "=== Test 2: List Releases (verify API access) ==="
+          gh release list --repo "${GITHUB_REPOSITORY}" --limit 3 2>&1 || echo "(failed to list releases)"
+          echo ""
+          
+          echo "=== Test 3: Direct HTTP with Details ==="
+          curl -i -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" 2>&1 | head -20
+
       - name: Create draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

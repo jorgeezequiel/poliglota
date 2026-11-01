@@ -30,10 +30,7 @@ def validate_tag(tag: str) -> str:
         msg = f"Tag '{tag}' must use ASCII characters only."
         raise ValueError(msg)
     if not SEMVER_TAG_PATTERN.fullmatch(tag):
-        msg = (
-            f"Invalid tag '{tag}'. Expected format: "
-            "vMAJOR.MINOR.PATCH using stable SemVer."
-        )
+        msg = f"Invalid tag '{tag}'. Expected format: vMAJOR.MINOR.PATCH using stable SemVer."
         raise ValueError(msg)
     return tag[1:]
 
@@ -114,10 +111,7 @@ def _metadata_lines(metadata_text: str, label: str) -> tuple[str, str]:
     version_matches = re.findall(r"^Version:\s*(.+)$", metadata_text, flags=re.MULTILINE)
 
     if len(name_matches) != 1:
-        msg = (
-            f"{label} metadata contains {len(name_matches)} Name entries; "
-            "expected exactly one."
-        )
+        msg = f"{label} metadata contains {len(name_matches)} Name entries; expected exactly one."
         raise ValueError(msg)
     if len(version_matches) != 1:
         msg = (
@@ -141,10 +135,7 @@ def _read_metadata_from_wheel(path: Path) -> tuple[str, str]:
                 msg = f"No METADATA file found inside {path.name}"
                 raise ValueError(msg)
             if len(metadata_entries) != 1:
-                msg = (
-                    f"Multiple METADATA files found inside {path.name}; "
-                    "expected exactly one."
-                )
+                msg = f"Multiple METADATA files found inside {path.name}; expected exactly one."
                 raise ValueError(msg)
             try:
                 raw = archive.read(metadata_entries[0])
@@ -182,10 +173,7 @@ def _read_metadata_from_sdist(path: Path) -> tuple[str, str]:
                 msg = f"No PKG-INFO file found inside {path.name}"
                 raise ValueError(msg)
             if len(pkg_info_members) != 1:
-                msg = (
-                    f"Multiple PKG-INFO files found inside {path.name}; "
-                    "expected exactly one."
-                )
+                msg = f"Multiple PKG-INFO files found inside {path.name}; expected exactly one."
                 raise ValueError(msg)
             member = pkg_info_members[0]
             extracted = archive.extractfile(member)
@@ -211,16 +199,16 @@ def _read_metadata_from_sdist(path: Path) -> tuple[str, str]:
     return _metadata_lines(metadata_text, "Source distribution")
 
 
-def validate_distribution_artifacts(dist_dir: str | Path, expected_version: str) -> tuple[Path, Path]:
+def validate_distribution_artifacts(
+    dist_dir: str | Path, expected_version: str
+) -> tuple[Path, Path]:
     """Validate the wheel and sdist files and ensure both match the expected version."""
     dist_path = Path(dist_dir)
     wheels = sorted(dist_path.glob("*.whl"))
     sdists = sorted(dist_path.glob("*.tar.gz"))
 
     if len(wheels) != 1:
-        msg = (
-            f"Expected exactly one wheel in {dist_path}, found {len(wheels)}: {wheels}"
-        )
+        msg = f"Expected exactly one wheel in {dist_path}, found {len(wheels)}: {wheels}"
         raise ValueError(msg)
     if len(sdists) != 1:
         msg = (
@@ -236,15 +224,11 @@ def validate_distribution_artifacts(dist_dir: str | Path, expected_version: str)
     sdist_name, sdist_version = _read_metadata_from_sdist(sdist)
 
     if wheel_name != "poliglota":
-        msg = (
-            "Wheel package name mismatch: expected 'poliglota', "
-            f"found {wheel_name!r}"
-        )
+        msg = f"Wheel package name mismatch: expected 'poliglota', found {wheel_name!r}"
         raise ValueError(msg)
     if sdist_name != "poliglota":
         msg = (
-            "Source distribution package name mismatch: expected 'poliglota', "
-            f"found {sdist_name!r}"
+            f"Source distribution package name mismatch: expected 'poliglota', found {sdist_name!r}"
         )
         raise ValueError(msg)
 
@@ -295,32 +279,33 @@ def fetch_github_release_state(
             try:
                 return status_code, json.loads(payload_bytes.decode("utf-8"))
             except json.JSONDecodeError as exc:
-                msg = (
-                    f"GitHub release API returned invalid JSON for tag '{tag_name}'."
-                )
+                msg = f"GitHub release API returned invalid JSON for tag '{tag_name}'."
                 raise ValueError(msg) from exc
     except urllib.error.HTTPError as exc:
         status_code = exc.code
-        if status_code in {401, 403, 422, 500}:
-            msg = f"GitHub release API returned an error status: {status_code}"
-            raise ValueError(msg) from exc
         body = exc.read()
         try:
             payload = json.loads(body.decode("utf-8")) if body else None
         except json.JSONDecodeError as exc:
-            msg = (
-                "GitHub release API returned an unexpected non-JSON body "
-                f"for tag '{tag_name}'."
-            )
+            msg = f"GitHub release API returned an unexpected non-JSON body for tag '{tag_name}'."
             raise ValueError(msg) from exc
+
+        # For error statuses, extract error message from payload
+        if status_code in {401, 403, 422, 500}:
+            error_msg = payload.get("message", "Unknown error") if payload else "Unknown error"
+            headers = exc.headers if hasattr(exc, "headers") and exc.headers else {}
+            request_id = (
+                headers.get("X-GitHub-Request-Id", "N/A") if isinstance(headers, dict) else "N/A"
+            )
+            msg = f"GitHub API {status_code}: {error_msg} [Request ID: {request_id}]"
+            raise ValueError(msg) from exc
+
         return status_code, payload
     except TimeoutError as exc:
         msg = f"GitHub release API request timed out while checking tag '{tag_name}'."
         raise ValueError(msg) from exc
     except urllib.error.URLError as exc:
-        msg = (
-            f"GitHub release API request failed for tag '{tag_name}': {exc.reason}"
-        )
+        msg = f"GitHub release API request failed for tag '{tag_name}': {exc.reason}"
         raise ValueError(msg) from exc
 
 
@@ -335,10 +320,7 @@ def classify_release_response(status_code: int | None, payload: dict | None) -> 
         draft = payload.get("draft")
         if isinstance(draft, bool):
             return "draft" if draft else "published"
-        msg = (
-            "GitHub release API returned HTTP 200 but missing a valid 'draft' flag: "
-            f"{payload!r}"
-        )
+        msg = f"GitHub release API returned HTTP 200 but missing a valid 'draft' flag: {payload!r}"
         raise ValueError(msg)
     if status_code in {401, 403, 422, 500}:
         msg = f"GitHub release API returned an error status: {status_code}"
