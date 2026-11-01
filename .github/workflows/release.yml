@@ -146,6 +146,27 @@ jobs:
           name: python-dist
           path: dist
 
+      - name: Verify build artifacts before release
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "📦 Release Artifacts:"
+          if [ -d "dist" ]; then
+            ls -lh dist/
+            wheel_count=$(find dist -name "*.whl" | wc -l)
+            sdist_count=$(find dist -name "*.tar.gz" | wc -l)
+            
+            if [ "$wheel_count" -ne 1 ] || [ "$sdist_count" -ne 1 ]; then
+              echo "❌ ERROR: Expected 1 wheel and 1 sdist, found wheel=$wheel_count sdist=$sdist_count" >&2
+              exit 1
+            fi
+            echo "✓ Found expected artifacts: 1 wheel + 1 sdist"
+          else
+            echo "❌ ERROR: dist/ directory does not exist!" >&2
+            exit 1
+          fi
+
       - name: Check existing GitHub release state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,24 +181,45 @@ jobs:
             --token "${GH_TOKEN}" 2>&1)"
 
           if [[ "${release_state}" == "missing" ]]; then
-            echo "No existing GitHub release found for ${TAG_NAME}. Creating draft release..."
+            echo "✓ No existing GitHub release found for ${TAG_NAME}. Will create draft release..."
           elif [[ "${release_state}" == "draft" ]]; then
-            echo "A draft release already exists for ${TAG_NAME}. No changes will be made."
+            echo "⚠️  A draft release already exists for ${TAG_NAME}. No changes will be made."
             exit 0
           elif [[ "${release_state}" == "published" ]]; then
-            echo "A published release already exists for ${TAG_NAME}. No changes will be made."
+            echo "ℹ️  A published release already exists for ${TAG_NAME}. No changes will be made."
             exit 0
           else
-            echo "Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
+            echo "❌ Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
             exit 1
           fi
 
-          ls -l dist
-
-          gh release create "${TAG_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" \
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GITHUB_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          echo "🚀 Creating draft release for ${TAG_NAME}..."
+          
+          # Create release with error handling
+          release_output=$(gh release create "${TAG_NAME}" \
+            --repo "${GITHUB_REPO}" \
             --draft \
             --generate-notes \
             --title "${TAG_NAME#v}" \
             dist/*.whl \
-            dist/*.tar.gz
+            dist/*.tar.gz 2>&1) || {
+            echo "❌ FAILED to create release!" >&2
+            echo "Output: ${release_output}" >&2
+            exit 1
+          }
+          
+          echo "✓ Draft release created successfully!"
+          echo ""
+          echo "Release Details:"
+          gh release view "${TAG_NAME}" --repo "${GITHUB_REPO}" \
+            --json isDraft,tagName,name,assets \
+            --template '{tagName} ({name}) - Draft: {isDraft} - Assets: {assets|length}' || true
