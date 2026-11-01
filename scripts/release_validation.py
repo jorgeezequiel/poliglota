@@ -173,7 +173,10 @@ def _read_metadata_from_sdist(path: Path) -> tuple[str, str]:
     try:
         with tarfile.open(path, mode="r:gz") as archive:
             pkg_info_members = [
-                member for member in archive.getmembers() if member.name.endswith("PKG-INFO")
+                member
+                for member in archive.getmembers()
+                if member.name.endswith("PKG-INFO")
+                and not member.name.endswith(".egg-info/PKG-INFO")
             ]
             if not pkg_info_members:
                 msg = f"No PKG-INFO file found inside {path.name}"

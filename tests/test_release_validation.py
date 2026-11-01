@@ -85,10 +85,7 @@ def test_writer_checks_tag_against_project_metadata(tmp_path: Path) -> None:
 
 def _build_valid_wheel(path: Path, version: str = "0.0.2") -> None:
     metadata = (
-        "Metadata-Version: 2.1\n"
-        "Name: poliglota\n"
-        f"Version: {version}\n"
-        "Summary: test package\n"
+        f"Metadata-Version: 2.1\nName: poliglota\nVersion: {version}\nSummary: test package\n"
     )
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("poliglota-0.0.2.dist-info/METADATA", metadata)

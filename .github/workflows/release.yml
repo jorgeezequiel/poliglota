@@ -110,7 +110,9 @@ jobs:
           python -m pip install --upgrade build twine
 
       - name: Build wheel and source distribution
-        run: python -m build --sdist --wheel --outdir dist
+        run: |
+          rm -rf dist
+          python -m build --sdist --wheel --outdir dist
 
       - name: Validate wheel and sdist metadata
         shell: bash
