@@ -405,7 +405,7 @@ def main() -> int:
                 timeout=args.timeout,
             )
             state = classify_release_response(status_code, payload)
-            print(f"Tag {args.tag} state: {state}")
+            print(state)
             return 0
         parser.error(f"Unsupported command: {args.command}")
         return 2

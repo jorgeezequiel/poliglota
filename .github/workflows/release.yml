@@ -159,23 +159,18 @@ jobs:
             --tag "${TAG_NAME}" \
             --token "${GH_TOKEN}" 2>&1)"
 
-          case "${release_state}" in
-            *"state: missing")
-              echo "No existing GitHub release found for ${TAG_NAME}. Creating draft release..."
-              ;;
-            *"state: draft")
-              echo "A draft release already exists for ${TAG_NAME}. No changes will be made."
-              exit 0
-              ;;
-            *"state: published")
-              echo "A published release already exists for ${TAG_NAME}. No changes will be made."
-              exit 0
-              ;;
-            *)
-              echo "Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
-              exit 1
-              ;;
-          esac
+          if [[ "${release_state}" == "missing" ]]; then
+            echo "No existing GitHub release found for ${TAG_NAME}. Creating draft release..."
+          elif [[ "${release_state}" == "draft" ]]; then
+            echo "A draft release already exists for ${TAG_NAME}. No changes will be made."
+            exit 0
+          elif [[ "${release_state}" == "published" ]]; then
+            echo "A published release already exists for ${TAG_NAME}. No changes will be made."
+            exit 0
+          else
+            echo "Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
+            exit 1
+          fi
 
           ls -l dist
 
