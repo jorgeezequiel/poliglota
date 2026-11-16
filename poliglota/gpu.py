@@ -99,7 +99,7 @@ def _bytes_to_gb(value_bytes: float) -> float:
     return float(value_bytes) / (1024**3)
 
 
-def _cuda_vram_stats(torch: ModuleType) -> tuple[float, float]:
+def _cuda_vram_stats(torch: ModuleType, device_index: int = 0) -> tuple[float, float]:
     """Return total and free CUDA memory in GiB."""
     if not bool(getattr(torch.cuda, "is_available", lambda: False)()):
         return 0.0, 0.0
@@ -108,9 +108,9 @@ def _cuda_vram_stats(torch: ModuleType) -> tuple[float, float]:
     free_bytes = 0.0
 
     try:
-        total_bytes, free_bytes = torch.cuda.mem_get_info()
-    except (AttributeError, RuntimeError, ValueError):
-        properties = torch.cuda.get_device_properties(0)
+        total_bytes, free_bytes = torch.cuda.mem_get_info(device_index)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        properties = torch.cuda.get_device_properties(device_index)
         total_bytes = float(getattr(properties, "total_memory", 0.0))
         free_bytes = total_bytes
 
@@ -168,7 +168,8 @@ def detect_device(preferred: str = "auto", strict: bool = False) -> str:
     mps_available = _is_mps_available(torch)
 
     # Validate device name; reject invalid devices
-    if requested not in {"auto", "cuda", "mps", "cpu", "gpu"}:
+    cuda_index_match = re.fullmatch(r"cuda:(\d+)", requested)
+    if requested not in {"auto", "cuda", "mps", "cpu", "gpu"} and not cuda_index_match:
         msg = f"Invalid device '{requested}'. Supported: auto, cpu, cuda, mps, gpu"
         if strict:
             raise ValueError(msg)
@@ -182,11 +183,19 @@ def detect_device(preferred: str = "auto", strict: bool = False) -> str:
         return selected
 
     # Handle explicit CUDA request
-    if requested == "cuda":
+    if requested == "cuda" or cuda_index_match:
         if cuda_available:
+            index = int(cuda_index_match.group(1)) if cuda_index_match else 0
+            count = int(getattr(torch.cuda, "device_count", lambda: 1)())
+            if index >= count:
+                msg = f"CUDA device {index} is not available; detected {count} device(s)."
+                if strict:
+                    raise ValueError(msg)
+                logger.warning("%s Falling back to CPU.", msg)
+                return "cpu"
             selected = "cuda"
             logger.info("CUDA selected as preferred device.")
-            return selected
+            return f"cuda:{index}" if cuda_index_match else selected
         msg = "CUDA requested but not available on this system."
         if strict:
             logger.error(msg)
@@ -238,10 +247,11 @@ def detect_device(preferred: str = "auto", strict: bool = False) -> str:
     return "cpu"
 
 
-def validate_vram(min_gb: float = 1.0) -> bool:
+def validate_vram(min_gb: float = 1.0, device: str | None = None) -> bool:
     """Check whether the current device has enough free VRAM for the target minimum."""
     torch = _require_torch()
-    device = detect_device("auto")
+    device = detect_device(device or "auto", strict=device not in {None, "auto"})
+    cuda_index_match = re.fullmatch(r"cuda:(\d+)", device)
 
     if device == "cpu":
         logger.debug("Skipping VRAM validation on CPU because no dedicated VRAM is available.")
@@ -250,8 +260,9 @@ def validate_vram(min_gb: float = 1.0) -> bool:
     min_gb = max(float(min_gb), 0.0)
     required_gb = min_gb * 1.08
 
-    if device == "cuda":
-        total_gb, free_gb = _cuda_vram_stats(torch)
+    if device == "cuda" or cuda_index_match:
+        device_index = int(cuda_index_match.group(1)) if cuda_index_match else 0
+        total_gb, free_gb = _cuda_vram_stats(torch, device_index)
         logger.debug(
             "Checking CUDA VRAM: total=%.2f GiB, free=%.2f GiB, required=%.2f GiB.",
             total_gb,
@@ -316,19 +327,20 @@ def get_device_info() -> dict[str, object]:
         "compute_capability": None,
     }
 
-    if device == "cuda":
+    if device == "cuda" or (cuda_index_match := re.fullmatch(r"cuda:(\d+)", device)):
+        device_index = int(cuda_index_match.group(1)) if cuda_index_match else 0
         try:
-            info["name"] = torch.cuda.get_device_name(0)
+            info["name"] = torch.cuda.get_device_name(device_index)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Unable to read CUDA device name: %s", exc)
             info["name"] = "CUDA"
 
-        total_gb, free_gb = _cuda_vram_stats(torch)
+        total_gb, free_gb = _cuda_vram_stats(torch, device_index)
         info["total_vram_gb"] = total_gb
         info["free_vram_gb"] = free_gb
 
         try:
-            info["compute_capability"] = torch.cuda.get_device_capability(0)
+            info["compute_capability"] = torch.cuda.get_device_capability(device_index)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.warning("Unable to read CUDA compute capability: %s", exc)
             info["compute_capability"] = None

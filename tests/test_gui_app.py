@@ -58,6 +58,30 @@ class DummyRoot:
         self._exists = False
 
 
+@pytest.mark.unit
+def test_friendly_unavailable_gpu_choice_maps_to_explicit_gpu_request() -> None:
+    app = PoliglotaGUI.__new__(PoliglotaGUI)
+    app.device_display_var = DummyVar("GPU (Example) — indisponível")
+    app.device_var = DummyVar("auto")
+    app._device_label_to_id = {"GPU (Example) — indisponível": "gpu-unavailable"}
+
+    app._on_device_display_changed()
+
+    assert app.device_var.get() == "gpu"
+
+
+@pytest.mark.unit
+def test_friendly_gpu_choice_keeps_indexed_backend_identifier() -> None:
+    app = PoliglotaGUI.__new__(PoliglotaGUI)
+    app.device_display_var = DummyVar("GPU (Example GPU)")
+    app.device_var = DummyVar("auto")
+    app._device_label_to_id = {"GPU (Example GPU)": "cuda:1"}
+
+    app._on_device_display_changed()
+
+    assert app.device_var.get() == "cuda:1"
+
+
 class DummyText:
     def __init__(self) -> None:
         self.text = ""

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from poliglota import gpu
+from poliglota.hardware import discover_devices, is_cuda_device
 
 from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
 from .engines.response_cache import ResponseCache
@@ -397,12 +398,15 @@ def _run_gui(args: argparse.Namespace) -> int:
     """Launch the desktop GUI from the CLI entry point."""
     from .gui import main as gui_main
 
-    return gui_main(["--project-root", str(args.root)])
+    gui_args = [] if args.root is None else ["--project-root", str(args.root)]
+    return gui_main(gui_args)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Poliglota: validate and sync localization files.")
     subparsers = parser.add_subparsers(dest="command", required=False)
+    devices_parser = subparsers.add_parser("devices", help="show available CPU and GPU devices")
+    devices_parser.set_defaults(func=_run_devices)
     subparsers.add_parser("interactive", help="launch interactive guided flow")
     subparsers.add_parser("guiado", help="lançar fluxo interativo guiado")
 
@@ -410,7 +414,7 @@ def _build_parser() -> argparse.ArgumentParser:
     gui_parser.add_argument(
         "--root",
         type=Path,
-        default=DEFAULT_ROOT,
+        default=None,
         help="initial project root to open in the desktop UI",
     )
     gui_parser.set_defaults(func=_run_gui)
@@ -517,7 +521,7 @@ def _build_parser() -> argparse.ArgumentParser:
     translate_parser.add_argument(
         "--device",
         default="auto",
-        help="Device to run inference on (auto, cpu, cuda, mps, gpu)",
+        help="Processing device: auto (recommended), cpu, or gpu; advanced: cuda[:index], mps",
     )
     translate_parser.add_argument(
         "--preserve-placeholders",
@@ -570,7 +574,7 @@ def _build_parser() -> argparse.ArgumentParser:
     translate_project_parser.add_argument(
         "--device",
         default="auto",
-        help="device to run inference on (auto, cpu, cuda, mps, gpu)",
+        help="processing device: auto (recommended), cpu, or gpu; advanced: cuda[:index], mps",
     )
     translate_project_parser.add_argument(
         "--format",
@@ -609,9 +613,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     prepare_model_parser.add_argument(
         "--device",
-        choices=["auto", "cpu", "cuda", "mps", "gpu"],
         default="auto",
-        help="Device to validate for model preparation (default: auto)",
+        help="Processing device: auto, cpu, or gpu; advanced: cuda[:index], mps",
     )
     prepare_model_parser.set_defaults(func=_run_prepare_model)
 
@@ -949,13 +952,26 @@ def _resolve_device_name(device: str | None) -> str:
         logger.info("Auto-selected runtime device via poliglota.gpu.detect_device(): %s", resolved)
         return resolved
 
-    if requested not in {"cpu", "cuda", "mps", "gpu"}:
-        msg = f"Unsupported device '{requested}'. Supported: auto, cpu, cuda, mps, gpu"
+    if requested not in {"cpu", "cuda", "mps", "gpu"} and not is_cuda_device(requested):
+        msg = f"Unsupported device '{requested}'. Supported: auto, cpu, gpu, cuda[:index], mps"
         raise ValueError(msg)
 
     resolved = gpu.detect_device(requested, strict=True)
     logger.info("Resolved device selection: requested=%s -> final=%s", requested, resolved)
     return resolved
+
+
+def _run_devices(_args: argparse.Namespace) -> int:
+    """Print friendly hardware choices with backend details kept out of the main labels."""
+    for option in discover_devices():
+        if option.identifier == "auto":
+            continue
+        if not option.available:
+            print(option.label)
+            continue
+        state = "disponível" if option.available else "indisponível"
+        print(f"{option.label} — {state}")
+    return 0
 
 
 def resolve_device_name(device: str | None) -> str:

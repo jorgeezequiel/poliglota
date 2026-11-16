@@ -62,6 +62,7 @@ from .gui_view import (
     GuiView,
     configure_dpi_scaling,
 )
+from .hardware import DeviceOption, discover_devices
 from .language_detection import detect_source_locale, normalize_locale_code
 from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
 from .translation_plan import build_translation_plan
@@ -340,6 +341,12 @@ class PoliglotaGUI:
         self.translation_var: tk.StringVar | None = None
         self.engine_var: tk.StringVar | None = None
         self.device_var: tk.StringVar | None = None
+        self.device_display_var: tk.StringVar | None = None
+        self._device_label_to_id: dict[str, str] = {
+            "Automático (recomendado)": "auto",
+            "CPU (identificação pendente)": "cpu",
+        }
+        self._hardware_discovery_pending = False
         self.model_var: tk.StringVar | None = None
         self.sync_dry_run_var: tk.BooleanVar | None = None
         self.theme_var: tk.StringVar | None = None
@@ -552,7 +559,7 @@ class PoliglotaGUI:
                 self.root is not None
                 and self._is_window_alive()
                 and not self._window_closed
-                and (active or self._is_running)
+                and (active or self._is_running or self._hardware_discovery_pending)
             ):
                 self._schedule_ui_poll()
 
@@ -1511,6 +1518,7 @@ class PoliglotaGUI:
         self.translation_var = tk.StringVar(value="")
         self.engine_var = tk.StringVar(value=self.state.engine)
         self.device_var = tk.StringVar(value=self.state.device)
+        self.device_display_var = tk.StringVar(value="Automático (recomendado)")
         self.model_var = tk.StringVar(value=self.state.model_name)
         self.sync_dry_run_var = tk.BooleanVar(value=self.state.dry_run)
         theme_name = self.state.theme if self.state.theme in THEME_CHOICES else DEFAULT_THEME
@@ -1531,6 +1539,7 @@ class PoliglotaGUI:
             translation=self.translation_var,
             engine=self.engine_var,
             device=self.device_var,
+            device_display=self.device_display_var,
             model=self.model_var,
             dry_run=self.sync_dry_run_var,
             theme=self.theme_var,
@@ -1587,6 +1596,99 @@ class PoliglotaGUI:
 
         self._ui_built = True
         self._refresh_validation()
+        if self.device_display_var is not None:
+            self.device_display_var.trace_add("write", self._on_device_display_changed)
+        self._start_device_discovery()
+
+    def _on_device_display_changed(self, *_args: object) -> None:
+        """Map the visible friendly label to the stable ID persisted by the GUI."""
+        if self.device_display_var is None or self.device_var is None:
+            return
+        identifier = self._device_label_to_id.get(self.device_display_var.get())
+        if identifier is not None:
+            self.device_var.set("gpu" if identifier == "gpu-unavailable" else identifier)
+
+    def _start_device_discovery(self) -> None:
+        """Discover accelerator labels off the Tk event thread."""
+        self._hardware_discovery_pending = True
+        self._schedule_ui_poll()
+
+        def worker() -> None:
+            try:
+                options = discover_devices()
+            except Exception:
+                logger.exception("Hardware discovery failed; keeping generic options")
+                options = [
+                    DeviceOption("auto", "Automático (recomendado)", available=True),
+                    DeviceOption("cpu", "CPU (Processador)", available=True),
+                ]
+            self.publish_message(
+                "callback",
+                (self._apply_device_options, (options,), {}),
+            )
+
+        threading.Thread(target=worker, name="poliglota-hardware-discovery", daemon=True).start()
+
+    def _apply_device_options(self, options: list[DeviceOption]) -> None:
+        """Update picker labels while retaining the stable configured identifier."""
+        self._hardware_discovery_pending = False
+        combo = self.view.field_widgets.get("device")
+        if combo is None or self.device_display_var is None or self.device_var is None:
+            return
+        auto_option = next((option for option in options if option.identifier == "auto"), None)
+        preferred = next(
+            (
+                option
+                for option in options
+                if option.available and option.identifier.startswith(("cuda", "mps"))
+            ),
+            next((option for option in options if option.identifier == "cpu"), None),
+        )
+        if auto_option is not None and preferred is not None:
+            auto_device_label = "GPU" if preferred.identifier != "cpu" else "CPU"
+            auto_option = DeviceOption(
+                "auto",
+                f"Automático (recomendado — usa {auto_device_label})",
+                available=True,
+            )
+            options = [auto_option if option.identifier == "auto" else option for option in options]
+        labels = [option.label for option in options]
+        self._device_label_to_id = {option.label: option.identifier for option in options}
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+            combo.configure(values=labels)
+        selected = self.device_var.get().strip().lower() or "auto"
+        matching = next((option for option in options if option.identifier == selected), None)
+        if matching is None and selected in {"cuda", "gpu"}:
+            matching = next(
+                (
+                    option
+                    for option in options
+                    if option.identifier.startswith("cuda:") and option.available
+                ),
+                None,
+            )
+        if matching is None and selected == "mps":
+            matching = next((option for option in options if option.identifier == "mps"), None)
+        if matching is None and selected in {"cuda", "mps", "gpu"}:
+            matching = next(
+                (option for option in options if option.identifier == "gpu-unavailable"),
+                None,
+            )
+            if matching is None:
+                matching = DeviceOption(
+                    "gpu-unavailable",
+                    "GPU (seleção anterior) — indisponível",
+                    available=False,
+                )
+                options.append(matching)
+                self._device_label_to_id[matching.label] = matching.identifier
+                with contextlib.suppress(AttributeError, RuntimeError, tk.TclError):
+                    combo.configure(values=[*labels, matching.label])
+        if matching is None:
+            matching = options[0]
+        self.device_display_var.set(matching.label)
+        if not matching.available:
+            self.device_var.set("gpu")
 
     def _restore_defaults(self) -> None:
         """Reset the form to the built-in defaults, keeping the current theme."""

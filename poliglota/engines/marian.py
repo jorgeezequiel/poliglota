@@ -120,9 +120,9 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
     def _normalize_device(device: str) -> str:
         """Validate the requested device value."""
         normalized = device.lower()
-        if normalized in {"cpu", "cuda", "mps"}:
+        if normalized in {"cpu", "cuda", "mps"} or re.fullmatch(r"cuda:\d+", normalized):
             return normalized
-        msg = "Unsupported device. Use 'cpu', 'cuda', or 'mps'."
+        msg = "Unsupported device. Use 'cpu', 'gpu', 'cuda[:index]', or 'mps'."
         raise ValueError(msg)
 
     @staticmethod
@@ -174,12 +174,25 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
 
         if device:
             self.device = self._normalize_device(device)
-        if self.device == "cuda" and (torch is None or not torch.cuda.is_available()):
-            logger.warning("CUDA requested but unavailable; falling back to CPU.")
-            self.device = "cpu"
-        elif self.device == "mps" and (torch is None or not hasattr(torch, "mps")):
-            logger.warning("MPS requested but unavailable; falling back to CPU.")
-            self.device = "cpu"
+        if self.device.startswith("cuda"):
+            device_index = int(self.device.partition(":")[2]) if ":" in self.device else 0
+            if torch is None or not torch.cuda.is_available():
+                message = "The selected GPU is unavailable in the translation runtime. Choose CPU."
+                raise RuntimeError(message)
+            if device_index >= int(torch.cuda.device_count()):
+                message = (
+                    f"The selected GPU index {device_index} is not available. "
+                    "Choose another device."
+                )
+                raise RuntimeError(message)
+        elif self.device == "mps" and (
+            torch is None
+            or not hasattr(torch, "mps")
+            or not callable(getattr(torch.mps, "is_available", None))
+            or not torch.mps.is_available()
+        ):
+            message = "Apple GPU support is unavailable in the translation runtime. Choose CPU."
+            raise RuntimeError(message)
 
         model_ref = self._check_local_model_path(model_path) or self.model_name
 
@@ -192,33 +205,12 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             self._model = model
             self._model_info["device"] = self.device
             self._model_info["model_name"] = self.model_name
-        except Exception as exc:  # pragma: no cover - runtime fallback path.
-            if torch is not None and isinstance(exc, torch.cuda.OutOfMemoryError):
-                logger.exception("CUDA memory error while loading Marian model; retrying on CPU.")
-                self.device = "cpu"
-                try:
-                    tokenizer = cast(
-                        "_TokenizerProtocol",
-                        AutoTokenizer.from_pretrained(model_ref),
-                    )
-                    model = cast(
-                        "_ModelProtocol",
-                        AutoModelForSeq2SeqLM.from_pretrained(model_ref),
-                    )
-                    model.to(self.device)
-                    model.eval()
-                    self._tokenizer = tokenizer
-                    self._model = model
-                    self._model_info["device"] = self.device
-                except Exception as retry_exc:  # pragma: no cover - runtime fallback path.
-                    msg = (
-                        "Failed to load Marian model after falling back to CPU. "
-                        f"Original error: {retry_exc}"
-                    )
-                    raise RuntimeError(msg) from retry_exc
-            else:
-                msg = f"Could not load Marian model '{model_ref}': {exc}"
+        except Exception as exc:  # pragma: no cover - runtime engine failure.
+            if "out of memory" in str(exc).lower():
+                msg = "GPU memory ran out while loading the model. Choose CPU to retry."
                 raise RuntimeError(msg) from exc
+            msg = f"Could not load Marian model '{model_ref}': {exc}"
+            raise RuntimeError(msg) from exc
 
     def _validate_pair(self, source_lang: str, target_lang: str) -> None:
         """Validate a requested translation pair against the known supported matrix."""
@@ -372,26 +364,9 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
                         raise RuntimeError(msg) from exc
 
                     if current_batch_size == 1:
-                        if self.device != "cpu" and torch is not None:
-                            cuda_oom = getattr(
-                                getattr(torch, "cuda", None), "OutOfMemoryError", None
-                            )
-                            if cuda_oom is not None and isinstance(exc, cuda_oom):
-                                logger.exception(
-                                    "CUDA out-of-memory during batch translation; "
-                                    "falling back to CPU."
-                                )
-                                self.device = "cpu"
-                                if self._model is not None:
-                                    self._model.to(self.device)
-                                try:
-                                    results = self._translate_with_model(stripped_chunk)
-                                    break
-                                except (
-                                    Exception
-                                ) as retry_exc:  # pragma: no cover - runtime engine failure.
-                                    msg = f"Marian batch inference failed: {retry_exc}"
-                                    raise RuntimeError(msg) from retry_exc
+                        if self.device != "cpu":
+                            msg = "GPU memory ran out during translation. Choose CPU to retry."
+                            raise RuntimeError(msg) from exc
                         msg = f"Marian batch inference failed: {exc}"
                         raise RuntimeError(msg) from exc
 

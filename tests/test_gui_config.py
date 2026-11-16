@@ -123,6 +123,7 @@ def test_choice_constants_match_cli_supported_values() -> None:
     assert set(FORMAT_CHOICES) == {"arb", "json", "yaml", "xml"}
     assert set(ENGINE_CHOICES) == {"marian", "pytorch"}
     assert set(DEVICE_CHOICES) == {"auto", "cpu", "cuda", "mps", "gpu"}
+    assert GuiState.from_mapping({"device": "cuda:1"}).device == "cuda:1"
 
 
 @pytest.mark.unit

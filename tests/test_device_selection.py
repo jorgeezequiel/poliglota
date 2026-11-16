@@ -65,6 +65,25 @@ class TestDetectDeviceStrictMode:
                 device = gpu.detect_device("cuda", strict=False)
                 assert device == "cuda"
 
+    def test_detect_device_indexed_cuda_keeps_selected_device(self) -> None:
+        with patch("poliglota.gpu._require_torch") as mock_torch:
+            mock_torch.return_value.cuda.is_available.return_value = True
+            mock_torch.return_value.cuda.device_count.return_value = 2
+            mock_torch.return_value.version.__version__ = "2.7.1"
+            with patch("poliglota.gpu._is_mps_available", return_value=False):
+                assert gpu.detect_device("cuda:1", strict=True) == "cuda:1"
+
+    def test_detect_device_indexed_cuda_rejects_missing_index(self) -> None:
+        with patch("poliglota.gpu._require_torch") as mock_torch:
+            mock_torch.return_value.cuda.is_available.return_value = True
+            mock_torch.return_value.cuda.device_count.return_value = 1
+            mock_torch.return_value.version.__version__ = "2.7.1"
+            with (
+                patch("poliglota.gpu._is_mps_available", return_value=False),
+                pytest.raises(ValueError, match="CUDA device 1 is not available"),
+            ):
+                gpu.detect_device("cuda:1", strict=True)
+
     def test_detect_device_cuda_unavailable_permissive_fallback(self) -> None:
         """CUDA explicit request falls back to CPU when unavailable (permissive mode)."""
         with patch("poliglota.gpu._require_torch") as mock_torch:
@@ -178,6 +197,16 @@ class TestResolveDeviceName:
             device = _resolve_device_name("cuda")
             assert device == "cuda"
             mock_detect.assert_called_once_with("cuda", strict=True)
+
+    def test_resolve_device_name_simple_gpu_uses_strict_backend(self) -> None:
+        with patch("poliglota.gpu.detect_device", return_value="cuda") as mock_detect:
+            assert _resolve_device_name("gpu") == "cuda"
+            mock_detect.assert_called_once_with("gpu", strict=True)
+
+    def test_resolve_device_name_indexed_cuda_preserves_index(self) -> None:
+        with patch("poliglota.gpu.detect_device", return_value="cuda:1") as mock_detect:
+            assert _resolve_device_name("cuda:1") == "cuda:1"
+            mock_detect.assert_called_once_with("cuda:1", strict=True)
 
     def test_resolve_device_name_explicit_uses_strict_cpu(self) -> None:
         """_resolve_device_name('cpu') uses strict detect_device."""

@@ -48,6 +48,22 @@ def test_ml_dependencies_are_optional_extras() -> None:
 
 
 @pytest.mark.parametrize(
+    ("root", "expected_args"),
+    [(None, []), (Path("C:/test project"), ["--project-root", str(Path("C:/test project"))])],
+)
+def test_gui_cli_preserves_saved_root_unless_explicitly_overridden(
+    monkeypatch: pytest.MonkeyPatch,
+    root: Path | None,
+    expected_args: list[str],
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr("poliglota.gui.main", lambda args: calls.append(args) or 0)
+
+    assert cli_module._run_gui(type("Args", (), {"root": root})()) == 0
+    assert calls == [expected_args]
+
+
+@pytest.mark.parametrize(
     ("encoding", "expected"),
     [("utf-8", True), ("cp1252", False), ("windows-1252", False), ("ascii", True), (None, True)],
 )

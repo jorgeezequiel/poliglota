@@ -100,14 +100,54 @@ def test_device_detection_prefers_gpu_if_available() -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
-def test_device_detection_fallback_to_cpu_if_cuda_unavailable() -> None:
+def test_device_detection_rejects_unavailable_explicit_cuda() -> None:
     with (
-        patch("poliglota.engines.pytorch_engine.detect_device", return_value="cpu"),
+        patch(
+            "poliglota.engines.pytorch_engine.detect_device",
+            side_effect=["cpu", ValueError("CUDA requested but unavailable")],
+        ),
         patch("poliglota.engines.pytorch_engine.validate_vram", return_value=False),
     ):
-        engine = PyTorchTranslationEngine("t5-small", device="cuda")
-        assert engine.device == "cpu"
-        assert engine._resolve_device("cuda") == "cpu"
+        engine = PyTorchTranslationEngine("t5-small", device="cpu")
+        with pytest.raises(ValueError, match="CUDA requested but unavailable"):
+            engine._resolve_device("cuda")
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+def test_indexed_cuda_moves_tokenized_inputs_to_selected_device() -> None:
+    input_ids = MagicMock(name="input_ids")
+    attention_mask = MagicMock(name="attention_mask")
+    tokenizer = MagicMock()
+    tokenizer.return_value = {"input_ids": input_ids, "attention_mask": attention_mask}
+    tokenizer.batch_decode.return_value = ["translated"]
+    model = MagicMock()
+    model.generate.return_value = object()
+
+    with (
+        patch("poliglota.engines.pytorch_engine.detect_device", return_value="cuda:0"),
+        patch("poliglota.engines.pytorch_engine.validate_vram", return_value=True),
+    ):
+        engine = PyTorchTranslationEngine("t5-small", device="cuda:0")
+        engine._model = model
+        engine._tokenizer = tokenizer
+
+    assert engine._generate_batch(["hello"], "en_US", "es_ES") == ["translated"]
+    input_ids.to.assert_called_once_with("cuda:0")
+    attention_mask.to.assert_called_once_with("cuda:0")
+    assert model.generate.call_args.kwargs["input_ids"] is input_ids.to.return_value
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+def test_explicit_gpu_out_of_memory_never_retries_on_cpu() -> None:
+    engine = PyTorchTranslationEngine("t5-small", device="cpu")
+    engine.requested_device = "cuda"
+    model = MagicMock()
+    model.to.side_effect = RuntimeError("CUDA out of memory")
+
+    with pytest.raises(RuntimeError, match="Choose CPU to retry"):
+        engine._move_model_to_device(model, "cuda")
+
+    model.to.assert_called_once_with("cuda")
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")

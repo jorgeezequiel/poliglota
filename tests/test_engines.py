@@ -144,7 +144,7 @@ class TestMariansNMTAdapter:
         assert adapter._model is mock_model
         assert adapter._tokenizer is mock_tokenizer
 
-    def test_adapter_load_model_falls_back_to_cpu_when_cuda_unavailable(self) -> None:
+    def test_adapter_load_model_rejects_unavailable_cuda_instead_of_falling_back(self) -> None:
         mock_tokenizer = Mock()
         mock_model = Mock()
         mock_model.to.return_value = mock_model
@@ -172,9 +172,10 @@ class TestMariansNMTAdapter:
             ),
         ):
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
-            adapter.load_model(device="cuda")
+            with pytest.raises(RuntimeError, match="selected GPU is unavailable"):
+                adapter.load_model(device="cuda")
 
-        assert adapter.device == "cpu"
+        assert adapter.device == "cuda"
 
     def test_adapter_raises_value_error_for_unsupported_model(self) -> None:
         with (

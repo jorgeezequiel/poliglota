@@ -85,6 +85,11 @@ _CHOICE_FIELDS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _is_valid_device(value: str) -> bool:
+    """Accept legacy backend IDs and stable per-device CUDA IDs."""
+    return value in DEVICE_CHOICES or (value.startswith("cuda:") and value[5:].isdigit())
+
+
 def default_state_path() -> Path:
     """Return the platform-appropriate path of the persisted GUI state file."""
     override = os.environ.get(STATE_FILE_ENV_VAR, "").strip()
@@ -147,6 +152,8 @@ class GuiState:
 
         for name, allowed in _CHOICE_FIELDS.items():
             current = getattr(state, name)
+            if name == "device" and _is_valid_device(current):
+                continue
             if current not in allowed:
                 logger.warning(
                     "Ignoring GUI state key %r: %r is not one of %s",
@@ -220,6 +227,8 @@ class Preset:
 
         for choice_name, allowed in _CHOICE_FIELDS.items():
             if choice_name == "theme" or choice_name not in values:
+                continue
+            if choice_name == "device" and _is_valid_device(values[choice_name]):
                 continue
             if values[choice_name] not in allowed:
                 logger.warning(

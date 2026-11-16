@@ -26,7 +26,6 @@ except ImportError as exc:  # pragma: no cover - platform-specific fallback
 
 from .gui_config import (
     DEFAULT_THEME,
-    DEVICE_CHOICES,
     ENGINE_CHOICES,
     FORMAT_CHOICES,
     LOCALE_CHOICES,
@@ -384,6 +383,7 @@ class GuiVariables:
     translation: tk.StringVar
     engine: tk.StringVar
     device: tk.StringVar
+    device_display: tk.StringVar
     model: tk.StringVar
     dry_run: tk.BooleanVar
     theme: tk.StringVar
@@ -772,14 +772,15 @@ class GuiView:
         ttk.Label(form, text="Dispositivo:").grid(row=4, column=2, sticky="w", padx=(0, 8), pady=4)
         device_combo = ttk.Combobox(
             form,
-            textvariable=variables.device,
-            values=list(DEVICE_CHOICES),
+            textvariable=variables.device_display,
+            values=["Automático (recomendado)", "CPU (identificação pendente)"],
             state="readonly",
-            width=12,
+            width=52,
         )
         device_combo.grid(row=4, column=3, sticky="w", padx=(0, 8), pady=4)
         self.interactive_widgets.append(device_combo)
-        self._add_tooltip(device_combo, "Dispositivo de execução (auto, cpu, cuda, mps, gpu).")
+        self.field_widgets["device"] = device_combo
+        self._add_tooltip(device_combo, "Escolha CPU, GPU ou processamento automático.")
 
         ttk.Label(form, text="Modelo:").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=4)
         model_combo = ttk.Combobox(

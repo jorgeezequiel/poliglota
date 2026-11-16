@@ -251,14 +251,14 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
     def _resolve_device(self, preferred: str) -> str:
         """Select the device, validating VRAM before choosing GPU."""
         requested = (preferred or "auto").strip().lower()
-        if requested not in {"auto", "cpu", "cuda", "mps"}:
-            logger.warning(
-                "Unsupported preferred device %r; using auto detection.",
-                preferred,
-            )
-            requested = "auto"
+        if requested not in {"auto", "cpu", "cuda", "mps", "gpu"} and not re.fullmatch(
+            r"cuda:\d+",
+            requested,
+        ):
+            message = f"Unsupported device {preferred!r}; use auto, cpu, gpu, cuda[:index] or mps."
+            raise ValueError(message)
 
-        selected = detect_device(requested)
+        selected = detect_device(requested, strict=requested != "auto")
         logger.info(
             "GPU/device selection resolved to %s for model=%s.",
             selected,
@@ -269,7 +269,13 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             return "cpu"
 
         required_vram = 2.0 if "mbart" in self.model_name.lower() else 0.8
-        if not validate_vram(min_gb=required_vram):
+        if not validate_vram(min_gb=required_vram, device=selected):
+            if requested != "auto":
+                message = (
+                    f"Insufficient GPU memory for model {self.model_name} on {selected}. "
+                    "Choose CPU to retry, or close other GPU applications and try again."
+                )
+                raise RuntimeError(message)
             logger.warning(
                 "Insufficient VRAM for model %s on %s. Falling back to CPU.",
                 self.model_name,
@@ -324,12 +330,12 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             raise RuntimeError(msg)
 
         requested = (device or self.requested_device or "auto").strip().lower()
-        if requested not in {"auto", "cpu", "cuda", "mps"}:
-            logger.warning(
-                "Unsupported device override %r; falling back to auto detection.",
-                device,
-            )
-            requested = "auto"
+        if requested not in {"auto", "cpu", "cuda", "mps", "gpu"} and not re.fullmatch(
+            r"cuda:\d+",
+            requested,
+        ):
+            message = f"Unsupported device override {device!r}."
+            raise ValueError(message)
 
         self.device = self._resolve_device(requested)
         logger.info(
@@ -383,22 +389,16 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         return isinstance(exc, oom_exc)
 
     def _move_model_to_device(self, model: _ModelProtocol, device: str) -> None:
-        """Move the model to the target device with automatic CPU fallback."""
+        """Move the model; explicit GPU selections never fall back silently."""
         try:
             model.to(device)
         except RuntimeError as exc:
-            if self._is_cuda_oom_error(exc):
+            if self._is_cuda_oom_error(exc) or "out of memory" in str(exc).lower():
+                if self.requested_device.strip().lower() != "auto":
+                    message = f"GPU memory ran out while loading on {device}. Choose CPU to retry."
+                    raise RuntimeError(message) from exc
                 logger.exception(
-                    "Out-of-memory while moving model to %s. Falling back to CPU.",
-                    device,
-                )
-                self.device = "cpu"
-                model.to("cpu")
-                return
-            if "out of memory" in str(exc).lower():
-                logger.exception(
-                    "Out-of-memory while moving model to %s. Falling back to CPU.",
-                    device,
+                    "Out-of-memory loading on %s; automatic mode is retrying on CPU.", device
                 )
                 self.device = "cpu"
                 model.to("cpu")
@@ -487,7 +487,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             tokenizer(prepared, **tokenizer_kwargs),
         )
 
-        if self.device in {"cuda", "mps"}:
+        if self.device.startswith("cuda") or self.device == "mps":
             tokenized = {key: value.to(self.device) for key, value in tokenized.items()}
 
         generation_kwargs: dict[str, Any] = {
@@ -544,9 +544,16 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
                 **generation_kwargs,
             )
         except RuntimeError as exc:
-            if not self._is_cuda_oom_error(exc):
+            if not self._is_cuda_oom_error(exc) and "out of memory" not in str(exc).lower():
                 raise
-            logger.exception("OOM during generation. Falling back to CPU for the current batch.")
+            if self.requested_device.strip().lower() != "auto":
+                message = (
+                    f"GPU memory ran out during translation on {self.device}. Choose CPU to retry."
+                )
+                raise RuntimeError(message) from exc
+            logger.exception(
+                "OOM during generation in automatic mode; retrying current batch on CPU."
+            )
             if self.device != "cpu":
                 self.device = "cpu"
                 model.to("cpu")
@@ -638,7 +645,12 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
                 )
                 batch_size = next_batch_size
                 if batch_size == 1 and len(chunk) > 1:
-                    logger.warning("Single-item fallback activated; switching to CPU for safety.")
+                    if self.requested_device.strip().lower() != "auto":
+                        message = f"GPU memory ran out on {self.device}. Choose CPU to retry."
+                        raise RuntimeError(message) from exc
+                    logger.warning(
+                        "Single-item fallback activated; switching to CPU in automatic mode."
+                    )
                     self.device = "cpu"
                     if self._model is not None:
                         self._model.to("cpu")
