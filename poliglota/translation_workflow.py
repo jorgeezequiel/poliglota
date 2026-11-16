@@ -166,7 +166,7 @@ def translate_resource_files(
                         )
                     translated_entries[key] = translated_text
                     report.translated += 1
-                except (OSError, TypeError, ValueError) as exc:
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
                     report.failed += 1
                     if report.details is not None:
                         report.details.append(

@@ -61,7 +61,7 @@ CSV e gettext não têm adapter implementado no código atual. Para detalhes do 
 
 - Python 3.11+
 - dependências de runtime declaradas em `pyproject.toml`
-- tradução local exige a stack opcional de ML (`.[gpu]`)
+- tradução local exige a stack opcional de ML (`[translation]`; `[gpu]` é mantido como alias)
 
 Instalação do pacote base:
 
@@ -78,10 +78,10 @@ python -m pip install -e ".[dev]"
 Stack opcional para tradução local:
 
 ```bash
-python -m pip install -e ".[gpu]"
+python -m pip install "poliglota[translation]"
 ```
 
-Importante: esse extra inclui `torch`, `transformers`, `huggingface-hub` e `sacremoses`, mas não instala pesos de modelo automaticamente.
+O extra `[translation]` inclui `torch`, `transformers`, `huggingface-hub` e `sacremoses`. O extra `[gpu]` continua disponível como alias compatível. Nenhum dos extras instala pesos de modelo automaticamente.
 
 ## Primeiros passos
 

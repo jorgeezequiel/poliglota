@@ -33,11 +33,34 @@ def mock_environ(monkeypatch: pytest.MonkeyPatch) -> Callable[[str | None], None
 
 
 @pytest.mark.unit
-def test_project_runtime_dependencies_include_rich() -> None:
+def test_ml_dependencies_are_optional_extras() -> None:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     dependencies = data["project"]["dependencies"]
     assert any(item.startswith("rich") for item in dependencies)
+    assert not any(
+        item.startswith(("torch", "transformers", "huggingface-hub", "sacremoses"))
+        for item in dependencies
+    )
+    extras = data["project"]["optional-dependencies"]
+    assert any(item.startswith("torch") for item in extras["translation"])
+    assert extras["translation"] == extras["gpu"]
+
+
+@pytest.mark.parametrize(
+    ("encoding", "expected"),
+    [("utf-8", True), ("cp1252", False), ("windows-1252", False), ("ascii", True), (None, True)],
+)
+def test_terminal_supports_unicode_for_known_and_unknown_encodings(
+    monkeypatch: pytest.MonkeyPatch, encoding: str | None, expected: bool
+) -> None:
+    class Stream:
+        pass
+
+    stream = Stream()
+    stream.encoding = encoding
+    monkeypatch.setattr(cli_module.sys, "stdout", stream)
+    assert cli_module._terminal_supports_unicode() is expected
 
 
 @pytest.mark.unit

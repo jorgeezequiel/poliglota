@@ -43,9 +43,7 @@ def _terminal_supports_unicode() -> bool:
         return True
     if "utf" in encoding or "65001" in encoding:
         return True
-    if encoding.startswith("cp") or encoding.startswith("windows-"):
-        return False
-    return True
+    return not encoding.startswith(("cp", "windows-"))
 
 
 def _use_rich_console() -> bool:
@@ -775,6 +773,7 @@ def _translate_with_placeholders(
     device: str,
     batch_size: int,
     engine: str = "marian",
+    adapter: Any | None = None,
 ) -> tuple[str, dict[str, int], float]:
     """Translate a single string using the selected engine with placeholder protection."""
     if batch_size <= 0:
@@ -789,9 +788,9 @@ def _translate_with_placeholders(
     if normalized_engine == "marian":
         _verify_offline_capability(model_name)
 
-    if normalized_engine == "marian":
+    if adapter is None and normalized_engine == "marian":
         adapter = _get_marian_adapter(model_name=model_name, device=device)
-    else:
+    elif adapter is None:
         adapter = _get_engine(
             normalized_engine,
             model_name=model_name,
@@ -832,7 +831,7 @@ def _translate_with_placeholders(
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     restored = protector.restore(translated_masked, placeholders_map)
-    restore_issues = protector.validate_restore(masked_text, restored, text)
+    restore_issues = protector.validate_preservation(text, restored)
     if restore_issues:
         logger.warning(
             "Placeholder restoration warnings: %s",
@@ -1195,8 +1194,10 @@ def _translate_single_target(
 
     try:
         resolved_device = _resolve_device_name(device)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(f"Error: {exc}")
+        if "torch" in str(exc).lower():
+            print("Hint: install translation support with `pip install 'poliglota[translation]'`.")
         return 1
     logger.info("Final device selected for translation: %s", resolved_device)
 
@@ -1268,29 +1269,16 @@ def _translate_single_target(
             getattr(adapter, "device", resolved_device),
             getattr(adapter, "batch_size", batch_size),
         )
-        if normalized_engine == "marian":
-            translated, placeholder_stats, elapsed_ms = _translate_with_placeholders(
-                text,
-                source,
-                target,
-                preserve_placeholders=preserve_placeholders,
-                model_name=model,
-                device=resolved_device,
-                batch_size=batch_size,
-            )
-        else:
-            translated = adapter.translate(
-                text,
-                _locale_to_engine_code(source),
-                _locale_to_engine_code(target),
-            )
-            placeholder_stats = {"preserved": 0, "substituted": 0, "missing": 0}
-            elapsed_ms = 0.0
-            logger.info(
-                "PyTorch inference completed on device=%s for model=%s",
-                getattr(adapter, "device", resolved_device),
-                model,
-            )
+        translated, placeholder_stats, elapsed_ms = _translate_with_placeholders(
+            text,
+            source,
+            target,
+            preserve_placeholders=preserve_placeholders,
+            model_name=model,
+            device=resolved_device,
+            batch_size=batch_size,
+            **({"engine": normalized_engine} if normalized_engine != "marian" else {}),
+        )
 
         if cache.enabled:
             cache.set(
@@ -1306,6 +1294,8 @@ def _translate_single_target(
         return 1
     except RuntimeError as exc:
         print(f"Error: {exc}")
+        if "torch" in str(exc).lower():
+            print("Hint: install translation support with `pip install 'poliglota[translation]'`.")
         print("Hint: try --device cpu to force the CPU path and reduce memory pressure.")
         return 1
     except FileNotFoundError as exc:
@@ -1449,12 +1439,14 @@ def _run_translate_project(args: argparse.Namespace) -> int:
 
     try:
         resolved_device = _resolve_device_name(args.device)
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(f"Error: {exc}")
+        if "torch" in str(exc).lower():
+            print("Hint: install translation support with `pip install 'poliglota[translation]'`.")
         return 1
 
     # Parse target locales (comma-separated)
-    target_locales = [t.strip() for t in args.target.split(",")]
+    target_locales = [target.strip() for target in args.target.split(",") if target.strip()]
     if not target_locales:
         print("Error: at least one target locale required")
         return 1
@@ -1482,7 +1474,7 @@ def _run_translate_project(args: argparse.Namespace) -> int:
             batch_size=args.batch_size,
             preserve_placeholders=args.preserve_placeholders,
         )
-    except ValueError as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         print(f"Error: {exc}")
         return 1
 

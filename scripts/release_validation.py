@@ -1,13 +1,18 @@
-# ruff: noqa: EM102,TRY003,TRY300,S310,E501
+# ruff: noqa: EM102, TRY003, TRY300, S310
 """Utilities for validating release tags and Python package artifacts."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import shutil
+import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -248,6 +253,78 @@ def validate_distribution_artifacts(
     return wheel, sdist
 
 
+def prepare_local_release(root: Path, dist_dir: Path, report_path: Path) -> dict[str, object]:
+    """Run local quality/build checks and write an artifact manifest without Git/network writes."""
+    root = root.resolve()
+    report_path = report_path.resolve()
+    version = assert_project_versions_match(root)
+    dist_dir = dist_dir.resolve() / f"poliglota-{version}"
+    checks: list[dict[str, object]] = []
+
+    def run_check(label: str, arguments: list[str]) -> None:
+        completed = subprocess.run(  # noqa: S603 -- fixed internal quality commands.
+            [sys.executable, *arguments],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        checks.append(
+            {
+                "name": label,
+                "command": [sys.executable, *arguments],
+                "returncode": completed.returncode,
+                "stdout": completed.stdout[-12000:],
+                "stderr": completed.stderr[-12000:],
+            }
+        )
+        if completed.returncode:
+            raise RuntimeError(f"{label} failed with exit code {completed.returncode}")
+
+    run_check("ruff lint", ["-m", "ruff", "check", "poliglota", "tests"])
+    run_check("ruff format", ["-m", "ruff", "format", "--check", "poliglota", "tests"])
+    run_check(
+        "version consistency",
+        ["-m", "pytest", "tests/test_version_consistency.py", "-q"],
+    )
+    run_check("pytest", ["-m", "pytest", "-q"])
+    if dist_dir.exists():
+        raise FileExistsError(f"Refusing to overwrite existing release artifacts: {dist_dir}")
+    with tempfile.TemporaryDirectory(prefix=f"poliglota-{version}-build-") as staging_name:
+        staging_dir = Path(staging_name)
+        run_check(
+            "build",
+            ["-m", "build", "--sdist", "--wheel", "--outdir", str(staging_dir)],
+        )
+        run_check("twine", ["-m", "twine", "check", *(str(path) for path in staging_dir.iterdir())])
+        wheel, sdist = validate_distribution_artifacts(staging_dir, version)
+        dist_dir.mkdir(parents=True)
+        staged_artifacts = (wheel, sdist)
+        for artifact in staged_artifacts:
+            shutil.copy2(artifact, dist_dir / artifact.name)
+    wheel, sdist = validate_distribution_artifacts(dist_dir, version)
+    artifacts = []
+    for artifact in (wheel, sdist):
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        artifacts.append(
+            {"path": str(artifact), "size_bytes": artifact.stat().st_size, "sha256": digest}
+        )
+    report: dict[str, object] = {
+        "version": version,
+        "created_at_epoch": int(time.time()),
+        "checks": checks,
+        "artifacts": artifacts,
+        "git_or_publish_operations": False,
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    return report
+
+
 def fetch_github_release_state(
     repo: str,
     tag_name: str,
@@ -335,6 +412,43 @@ def classify_release_response(status_code: int | None, payload: dict | None) -> 
     raise ValueError(msg)
 
 
+def validate_release_payload(
+    status_code: int,
+    payload: dict | None,
+    tag_name: str,
+    expected_version: str,
+    asset_count: int,
+    expected_state: str = "draft",
+) -> None:
+    """Fail unless a release API response describes the expected draft and assets."""
+    state = classify_release_response(status_code, payload)
+    if state != expected_state or payload is None:
+        raise ValueError(f"Expected a {expected_state} release for {tag_name}; found {state}.")
+    if payload.get("tag_name") != tag_name:
+        raise ValueError(
+            f"Release tag mismatch: expected {tag_name!r}, found {payload.get('tag_name')!r}."
+        )
+    if validate_tag(tag_name) != expected_version:
+        raise ValueError(f"Release version mismatch for tag {tag_name!r}.")
+    assets = payload.get("assets")
+    if not isinstance(assets, list) or len(assets) != asset_count:
+        actual_count = len(assets) if isinstance(assets, list) else "invalid"
+        raise ValueError(f"Expected {asset_count} release assets, found {actual_count}.")
+    if any(not isinstance(asset, dict) or not asset.get("name") for asset in assets):
+        msg = "Release contains an asset without a valid name."
+        raise ValueError(msg)
+    expected_names = {
+        f"poliglota-{expected_version}-py3-none-any.whl",
+        f"poliglota-{expected_version}.tar.gz",
+    }
+    actual_names = {str(asset["name"]) for asset in assets}
+    if actual_names != expected_names:
+        raise ValueError(
+            "Release assets mismatch: "
+            f"expected {sorted(expected_names)}, found {sorted(actual_names)}."
+        )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate release tags and package artifacts.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -362,6 +476,25 @@ def _build_parser() -> argparse.ArgumentParser:
     status_parser.add_argument("--token", default=None)
     status_parser.add_argument("--timeout", type=float, default=10.0)
 
+    prepare_parser = subparsers.add_parser(
+        "prepare-local",
+        help="Run local quality checks, build artifacts, and write a SHA-256 report.",
+    )
+    prepare_parser.add_argument("--root", default=".")
+    prepare_parser.add_argument("--dist-dir", default="dist")
+    prepare_parser.add_argument("--report", default="reports/local-release.json")
+
+    verify_parser = subparsers.add_parser(
+        "verify-release",
+        help="Verify an existing GitHub draft release and its attached assets.",
+    )
+    verify_parser.add_argument("--repo", required=True)
+    verify_parser.add_argument("--tag", required=True)
+    verify_parser.add_argument("--token", default=None)
+    verify_parser.add_argument("--version", required=True)
+    verify_parser.add_argument("--asset-count", type=int, default=2)
+    verify_parser.add_argument("--expected-state", choices=("draft", "published"), default="draft")
+
     return parser
 
 
@@ -388,6 +521,22 @@ def main() -> int:
             )
             state = classify_release_response(status_code, payload)
             print(state)
+            return 0
+        if args.command == "prepare-local":
+            report = prepare_local_release(Path(args.root), Path(args.dist_dir), Path(args.report))
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+            return 0
+        if args.command == "verify-release":
+            status_code, payload = fetch_github_release_state(args.repo, args.tag, token=args.token)
+            validate_release_payload(
+                status_code,
+                payload,
+                args.tag,
+                args.version,
+                args.asset_count,
+                args.expected_state,
+            )
+            print(f"Verified draft release {args.tag} with {args.asset_count} assets.")
             return 0
         parser.error(f"Unsupported command: {args.command}")
         return 2

@@ -98,7 +98,9 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             err = _IMPORT_ERROR
             msg = (
                 "Missing ML dependencies. Install torch>=2.7 and "
-                "transformers>=4.35 before using PyTorchTranslationEngine."
+                "transformers>=4.35,<5 before using PyTorchTranslationEngine. "
+                "Install optional dependencies with "
+                "`pip install 'poliglota[translation]'`."
             )
             raise RuntimeError(msg) from err
 

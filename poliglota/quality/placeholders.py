@@ -72,7 +72,11 @@ class ArbPlaceholderProtector:
         """
         result = text
         for token, placeholder in placeholders_map.items():
-            # Escape token for regex (tokens have uuid format, unlikely to have special chars)
+            # Multilingual tokenizers may remove leading underscores while
+            # preserving the per-placeholder nonce. Recover that marker too.
+            nonce = token.rsplit("_", 1)[-1]
+            damaged_marker = re.compile(rf"(?i)_*PH_{re.escape(nonce)}")
+            result = damaged_marker.sub(token, result)
             result = result.replace(token, placeholder)
         return result
 
@@ -143,6 +147,27 @@ class ArbPlaceholderProtector:
         if self.token_prefix in restored:
             issues.append("Placeholder tokens still present in restored text")
 
+        return issues
+
+    def validate_preservation(self, original: str, translated: str) -> list[str]:
+        """Check placeholder multiplicity while allowing translated prose to differ."""
+        original_counts: dict[str, int] = {}
+        translated_counts: dict[str, int] = {}
+        for value in re.findall(self._PLACEHOLDER_PATTERN, original):
+            placeholder = "{" + value + "}"
+            original_counts[placeholder] = original_counts.get(placeholder, 0) + 1
+        for value in re.findall(self._PLACEHOLDER_PATTERN, translated):
+            placeholder = "{" + value + "}"
+            translated_counts[placeholder] = translated_counts.get(placeholder, 0) + 1
+
+        issues = [
+            f"Placeholder {placeholder} count changed from {count} to "
+            f"{translated_counts.get(placeholder, 0)}"
+            for placeholder, count in original_counts.items()
+            if translated_counts.get(placeholder, 0) != count
+        ]
+        if self.token_prefix in translated:
+            issues.append("Placeholder tokens still present in translated text")
         return issues
 
 

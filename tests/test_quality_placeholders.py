@@ -61,6 +61,15 @@ def test_arb_protector_mask_single_placeholder() -> None:
     assert any(token in masked for token in placeholders_map)
 
 
+def test_arb_protector_restores_marker_after_tokenizer_drops_prefix_underscores() -> None:
+    protector = ArbPlaceholderProtector()
+    _, placeholders_map = protector.mask("Hello {name}")
+    token = next(iter(placeholders_map))
+    damaged = "Hola, " + token.lstrip("_")
+
+    assert protector.restore(damaged, placeholders_map) == "Hola, {name}"
+
+
 def test_arb_protector_mask_multiple_placeholders() -> None:
     """Protector masks multiple placeholders independently."""
     protector = ArbPlaceholderProtector()
@@ -191,6 +200,13 @@ def test_arb_protector_validate_restore_success() -> None:
     issues = protector.validate_restore(masked, restored, original)
 
     assert issues == []
+
+
+def test_arb_protector_validates_placeholders_without_comparing_translated_prose() -> None:
+    protector = ArbPlaceholderProtector()
+
+    assert protector.validate_preservation("Hello {name} {count}", "Hola {name} {count}") == []
+    assert protector.validate_preservation("Hello {name} {name}", "Hola {name}")
 
 
 def test_arb_protector_validate_restore_mismatch() -> None:

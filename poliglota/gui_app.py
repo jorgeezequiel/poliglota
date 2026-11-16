@@ -1114,9 +1114,7 @@ class PoliglotaGUI:
             msg = "Informe origem e destino antes de resolver o modelo padrão."
             raise ValueError(msg)
 
-        target_candidates = [
-            item.strip() for item in target.split(",") if item.strip()
-        ]
+        target_candidates = [item.strip() for item in target.split(",") if item.strip()]
         if len(target_candidates) > 1:
             resolved = self._resolve_default_model_for_targets(normalized, target_candidates)
             if resolved is not None:

@@ -87,8 +87,8 @@ def test_gui_app_builds_without_display() -> None:
 
 
 @pytest.mark.unit
-def test_package_version_matches_020() -> None:
-    assert __version__ == "0.0.2"
+def test_package_version_matches_release_version() -> None:
+    assert __version__ == "0.0.3"
 
 
 @pytest.mark.unit

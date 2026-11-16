@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "poliglota"
-version = "0.0.2"
+version = "0.0.3"
 description = "Localization toolkit: ARB validation/sync with a framework-agnostic core"
 authors = [{ name = "Jorge Ezequiel de Lima Santos" }]
 readme = "README.md"
@@ -16,10 +16,6 @@ dependencies = [
     "langdetect>=1.0.9",
     "pyyaml>=6.0",
     "rich>=13.7.0",
-    "torch>=2.7.0",
-    "transformers>=5.20.0",
-    "huggingface-hub>=0.20.0",
-    "sacremoses>=0.1.0",
 ]
 
 [project.scripts]
@@ -33,9 +29,17 @@ dev = [
 ]
 gpu = [
     "torch>=2.7.0",
-    "transformers>=5.20.0",
+    "transformers>=4.35,<5",
     "huggingface-hub>=0.20.0",
     "sacremoses>=0.1.0",
+    "sentencepiece>=0.2.0",
+]
+translation = [
+    "torch>=2.7.0",
+    "transformers>=4.35,<5",
+    "huggingface-hub>=0.20.0",
+    "sacremoses>=0.1.0",
+    "sentencepiece>=0.2.0",
 ]
 dnd = ["tkinterdnd2>=0.4.0"]
 

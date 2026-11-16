@@ -101,6 +101,13 @@ class TestCLIValidateMultiformat:
         result = _run_validate(temp_locales / "l10n", "pt_BR", "unsupported")
         assert result == 2  # KeyError from registry.get()
 
+    def test_validate_rejects_malformed_source_json(self, tmp_path: Path) -> None:
+        locales = tmp_path / "project with spaces"
+        locales.mkdir()
+        (locales / "app_pt_BR.json").write_text("{broken", encoding="utf-8")
+
+        assert _run_validate(locales, "pt_BR", "json") == 1
+
 
 class TestCLISyncMultiformat:
     """Test CLI sync command with multiple formats."""

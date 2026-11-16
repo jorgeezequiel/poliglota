@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 from poliglota.core.locale import Locale
 from poliglota.language_detection import detect_source_locale, normalize_locale_code
 
@@ -156,12 +158,23 @@ def validate_with_adapter(
     issues: list[str] = []
     source_resources = by_locale[source_key]
 
+    for resource in source_resources:
+        try:
+            adapter.read(resource.path)
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            msg = f"Failed to read {resource.path}: {exc}"
+            raise ValueError(msg) from exc
+
     for locale, locale_resources in by_locale.items():
         if locale == source_key:
             continue
 
         for source_resource in source_resources:
-            source_doc = adapter.read(source_resource.path)
+            try:
+                source_doc = adapter.read(source_resource.path)
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                msg = f"Failed to read {source_resource.path}: {exc}"
+                raise ValueError(msg) from exc
             source_group = _resource_group_key(source_resource)
 
             for target_resource in locale_resources:
@@ -170,7 +183,11 @@ def validate_with_adapter(
                 if source_group != target_group:
                     continue
 
-                target_doc = adapter.read(target_resource.path)
+                try:
+                    target_doc = adapter.read(target_resource.path)
+                except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                    msg = f"Failed to read {target_resource.path}: {exc}"
+                    raise ValueError(msg) from exc
 
                 # Check for missing keys
                 if check_keys:

@@ -18,6 +18,7 @@ from scripts.release_validation import (
     fetch_github_release_state,
     read_project_versions,
     validate_distribution_artifacts,
+    validate_release_payload,
     validate_tag,
     validate_tag_against_project,
 )
@@ -55,8 +56,8 @@ def test_invalid_release_tags(tag: str) -> None:
 
 def test_project_versions_are_consistent() -> None:
     versions = read_project_versions(Path(__file__).resolve().parents[1])
-    assert set(versions.values()) == {"0.0.2"}
-    assert assert_project_versions_match(Path(__file__).resolve().parents[1]) == "0.0.2"
+    assert set(versions.values()) == {"0.0.3"}
+    assert assert_project_versions_match(Path(__file__).resolve().parents[1]) == "0.0.3"
 
 
 def test_project_versions_detect_divergence(tmp_path: Path) -> None:
@@ -200,6 +201,35 @@ def test_classify_release_response_rejects_errors(status_code: int) -> None:
 def test_classify_release_response_rejects_missing_payload() -> None:
     with pytest.raises(ValueError, match=r"no JSON payload|missing a valid 'draft' flag"):
         classify_release_response(200, None)
+
+
+def test_verify_release_payload_accepts_only_expected_draft_assets() -> None:
+    payload = {
+        "tag_name": "v0.0.3",
+        "draft": True,
+        "assets": [
+            {"name": "poliglota-0.0.3-py3-none-any.whl"},
+            {"name": "poliglota-0.0.3.tar.gz"},
+        ],
+    }
+    validate_release_payload(200, payload, "v0.0.3", "0.0.3", 2)
+    validate_release_payload(
+        200,
+        {**payload, "draft": False},
+        "v0.0.3",
+        "0.0.3",
+        2,
+        expected_state="published",
+    )
+
+    for wrong in (
+        {**payload, "draft": False},
+        {**payload, "tag_name": "v0.0.2"},
+        {**payload, "assets": payload["assets"][:1]},
+        {**payload, "assets": [{"name": "unexpected.whl"}, {"name": "unexpected.tar.gz"}]},
+    ):
+        with pytest.raises(ValueError, match=r"draft|tag mismatch|Expected 2|assets mismatch"):
+            validate_release_payload(200, wrong, "v0.0.3", "0.0.3", 2)
 
 
 def test_fetch_github_release_status_handles_error_and_invalid_json(

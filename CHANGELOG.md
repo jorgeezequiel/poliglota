@@ -4,7 +4,19 @@ Todas as mudanças relevantes deste projeto são documentadas neste arquivo.
 
 O formato segue o [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto adota SemVer para os metadados do pacote.
 
-> A versão `0.0.1` ainda não possui tag nem release publicada; por isso não há data de lançamento associada.
+> `v0.0.2` já está associada a um commit anterior; estas correções locais usam `0.0.3` e exigem uma nova tag.
+
+## [0.0.3] - Preparação local
+
+### Corrigido
+
+- Corrigidos avisos Ruff de detecção de encoding no terminal com cobertura dos encodings Windows e desconhecidos.
+- Dependências de tradução PyTorch movidas para extras opcionais, preservando o extra `[gpu]`.
+- Substituído o script obsoleto de entrega, que podia modificar Git, por preparação local sem operações Git ou publicação.
+- Validação de artefatos do workflow de release agora reprova arquivos ausentes ou inválidos; removido diagnóstico que ignorava erros.
+- A faixa de Transformers foi limitada à série 4.x enquanto a versão 5 não oferece o tokenizer Marian usado pelo motor existente.
+- Extra de tradução inclui SentencePiece, necessário ao tokenizer Marian; fechamento do motor não tenta limpar MPS indisponível.
+- CLI agora explica como instalar extras ausentes, falhas de `translate-project` viram relatórios e validação rejeita arquivos de origem malformados.
 
 ## [0.0.1]
 

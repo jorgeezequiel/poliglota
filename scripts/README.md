@@ -11,7 +11,7 @@ Este diretório contém scripts auxiliares para desenvolvimento, manutenção e 
   - `audit_phase_c_flow_v2.py` — Smoke test de CLI sem hard-coded venv GPU.
   - `_portable.py` — Helpers compartilhados para resolução de caminhos e argumentos portáveis.
 
-- **`deliver.py`** — Automação de entrega e operações Git (não executado, futuro condicional).
+- **`release_validation.py`** — Valida tags/artefatos; `prepare-local` roda validações, constrói wheel/sdist e grava relatório e SHA-256 sem alterar Git ou publicar.
 - **`generate_audit_report.py`** — Geração de relatórios finais de auditoria.
 
 ## Portabilidade
@@ -28,6 +28,8 @@ python scripts/audit/audit_phase_c_flow.py --repo-root . --corpus-root /caminho/
 A validação de GPU permanece explícita. Se uma operação exigir CUDA, o script informa a indisponibilidade em vez de substituir silenciosamente CUDA por CPU.
 
 ## Notas
+
+Prepare uma versão local com `python -m scripts.release_validation prepare-local --root . --dist-dir dist --report reports/local-release.json`.
 
 - Estes scripts **não fazem parte da CLI principal** (`poliglota --help`).
 - São artefatos de desenvolvimento interno e traceabilidade histórica.

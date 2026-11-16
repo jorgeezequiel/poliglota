@@ -101,7 +101,8 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         if _IMPORT_ERROR is not None:
             msg = (
                 "Missing Marian offline dependency stack. "
-                "Install transformers>=4.35, torch>=2.0 and huggingface_hub>=0.20."
+                "Install transformers>=4.35,<5, torch>=2.7 and huggingface_hub>=0.20 "
+                "with `pip install 'poliglota[translation]'`."
             )
             raise RuntimeError(msg) from _IMPORT_ERROR
 
@@ -436,7 +437,8 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
                 torch.cuda.empty_cache()
             mps_module = getattr(torch, "mps", None)
             empty_cache = getattr(mps_module, "empty_cache", None)
-            if callable(empty_cache):
+            is_available = getattr(mps_module, "is_available", None)
+            if callable(empty_cache) and callable(is_available) and is_available():
                 empty_cache()
 
     def translate_request(self, request: TranslationRequest) -> TranslationResult:

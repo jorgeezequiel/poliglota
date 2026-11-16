@@ -148,27 +148,17 @@ jobs:
           path: dist
 
       - name: Verify build artifacts before release
-        shell: bash
+        shell: python
         run: |
-          set -euo pipefail
-          
-          echo "📦 Release Artifacts:"
-          if [ -d "dist" ]; then
-            ls -lh dist/
-            wheel_count=$(find dist -name "*.whl" | wc -l)
-            sdist_count=$(find dist -name "*.tar.gz" | wc -l)
-            
-            if [ "$wheel_count" -ne 1 ] || [ "$sdist_count" -ne 1 ]; then
-              echo "❌ ERROR: Expected 1 wheel and 1 sdist, found wheel=$wheel_count sdist=$sdist_count" >&2
-              exit 1
-            fi
-            echo "✓ Found expected artifacts: 1 wheel + 1 sdist"
-          else
-            echo "❌ ERROR: dist/ directory does not exist!" >&2
-            exit 1
-          fi
+          from pathlib import Path
+          from scripts.release_validation import validate_distribution_artifacts
+
+          expected = "${{ needs.validate-version.outputs.version }}"
+          wheel, sdist = validate_distribution_artifacts(Path("dist"), expected)
+          print(f"Validated release artifacts: {wheel.name}, {sdist.name}")
 
       - name: Check existing GitHub release state
+        id: existing
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -181,52 +171,15 @@ jobs:
             --tag "${TAG_NAME}" \
             --token "${GH_TOKEN}" 2>&1)"
 
-          if [[ "${release_state}" == "missing" ]]; then
-            echo "✓ No existing GitHub release found for ${TAG_NAME}. Will create draft release..."
-          elif [[ "${release_state}" == "draft" ]]; then
-            echo "⚠️  A draft release already exists for ${TAG_NAME}. No changes will be made."
-            exit 0
-          elif [[ "${release_state}" == "published" ]]; then
-            echo "ℹ️  A published release already exists for ${TAG_NAME}. No changes will be made."
-            exit 0
-          else
+          if [[ "${release_state}" != "missing" && "${release_state}" != "draft" && "${release_state}" != "published" ]]; then
             echo "❌ Unexpected GitHub release state for ${TAG_NAME}: ${release_state}" >&2
             exit 1
           fi
-
-      - name: Diagnose GitHub API access (on validation failure)
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG_NAME: ${{ github.ref_name }}
-        shell: bash
-        run: |
-          set +e  # Don't exit on errors in diagnostic commands
-          
-          echo "=== GitHub Release API Diagnostics ==="
-          echo "Repository: ${GITHUB_REPOSITORY}"
-          echo "Tag: ${TAG_NAME}"
-          echo ""
-          
-          echo "=== Current Job Permissions ==="
-          echo "Expected: contents:write, metadata:read"
-          echo "Note: Actual permissions are set in job definition (should show contents:write)"
-          echo ""
-          
-          echo "=== Test 1: Direct gh CLI Query ==="
-          gh release view "${TAG_NAME}" --repo "${GITHUB_REPOSITORY}" 2>&1 || echo "(expected to fail if release doesn't exist)"
-          echo ""
-          
-          echo "=== Test 2: List Releases (verify API access) ==="
-          gh release list --repo "${GITHUB_REPOSITORY}" --limit 3 2>&1 || echo "(failed to list releases)"
-          echo ""
-          
-          echo "=== Test 3: Direct HTTP with Details ==="
-          curl -i -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG_NAME}" 2>&1 | head -20
+          echo "state=${release_state}" >> "${GITHUB_OUTPUT}"
+          echo "Release state for ${TAG_NAME}: ${release_state}"
 
       - name: Create draft GitHub release
+        if: needs.validate-version.result == 'success' && needs.quality.result == 'success' && needs.build.result == 'success' && steps.existing.outputs.state == 'missing'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
@@ -251,8 +204,18 @@ jobs:
           }
           
           echo "✓ Draft release created successfully!"
-          echo ""
-          echo "Release Details:"
-          gh release view "${TAG_NAME}" --repo "${GITHUB_REPO}" \
-            --json isDraft,tagName,name,assets \
-            --template '{tagName} ({name}) - Draft: {isDraft} - Assets: {assets|length}' || true
+          python -m scripts.release_validation verify-release \
+            --repo "${GITHUB_REPO}" --tag "${TAG_NAME}" --token "${GH_TOKEN}" \
+            --version "${TAG_NAME#v}" --asset-count 2
+
+      - name: Verify existing release remains complete
+        if: steps.existing.outputs.state == 'draft' || steps.existing.outputs.state == 'published'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          GITHUB_REPO: ${{ github.repository }}
+          RELEASE_STATE: ${{ steps.existing.outputs.state }}
+        run: >-
+          python -m scripts.release_validation verify-release
+          --repo "${GITHUB_REPO}" --tag "${TAG_NAME}" --token "${GH_TOKEN}"
+          --version "${TAG_NAME#v}" --asset-count 2 --expected-state "${RELEASE_STATE}"

@@ -419,6 +419,25 @@ class TestTranslateCommand:
         assert placeholder_stats == {"preserved": 0, "substituted": 0, "missing": 0}
         assert elapsed >= 0
 
+    def test_pytorch_translation_preserves_placeholders(self) -> None:
+        adapter = Mock()
+        adapter.translate.side_effect = lambda masked, *_args: masked
+
+        translated, stats, _ = cli_module._translate_with_placeholders(
+            "Hello {user_name}, {count}!",
+            "en_US",
+            "pt_BR",
+            preserve_placeholders=True,
+            model_name="facebook/nllb-200-distilled-600M",
+            device="cpu",
+            batch_size=1,
+            engine="pytorch",
+            adapter=adapter,
+        )
+
+        assert translated == "Hello {user_name}, {count}!"
+        assert stats["preserved"] == 2
+
     def test_translate_command_success_for_plain_text(
         self,
         capsys: pytest.CaptureFixture[str],
