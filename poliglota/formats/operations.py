@@ -67,6 +67,8 @@ def _resource_group_key(resource: Any) -> str:
         return str(module)
 
     path = getattr(resource, "path", None)
+    if attributes.get("android_values") and path is not None:
+        return str(path.name)
     if path is not None:
         candidate = path.parent.name or path.stem
         if candidate and candidate not in {".", ""}:
@@ -230,6 +232,19 @@ def _validate_placeholders_for_adapter(
         issues.extend(
             f"{locale}:{target_resource.path.name} {issue}" for issue in placeholder_issues
         )
+    elif adapter.name == "xml":
+        from poliglota.quality.placeholders import ArbPlaceholderProtector
+
+        protector = ArbPlaceholderProtector()
+        for key in source_doc.entries.keys() & target_doc.entries.keys():
+            source_value = source_doc.entries[key]
+            target_value = target_doc.entries[key]
+            if not isinstance(source_value, str) or not isinstance(target_value, str):
+                continue
+            issues.extend(
+                f"{locale}:{target_resource.path.name} {key}: {issue}"
+                for issue in protector.validate_preservation(source_value, target_value)
+            )
 
 
 def sync_with_adapter(

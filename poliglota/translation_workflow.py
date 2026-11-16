@@ -80,6 +80,7 @@ def translate_resource_files(
         normalized_target = normalize_locale_code(target_locale) or target_locale
         if normalized_target == source_locale:
             continue
+        translation_adapter = None
         for src_res in source_resources:
             try:
                 src_doc = adapter.read(src_res.path)
@@ -89,13 +90,23 @@ def translate_resource_files(
                     report.details.append({"file": str(src_res.path), "error": str(exc)})
                 continue
 
-            try:
-                rel = src_res.path.relative_to(root)
-            except ValueError:
-                rel = Path(src_res.path.name)
-            out_path = out_dir / rel
-            name = out_path.name
-            out_path = out_path.with_name(name.replace(source_locale, target_locale))
+            target_path_builder = getattr(adapter, "target_path", None)
+            if callable(target_path_builder):
+                out_path = target_path_builder(
+                    src_res,
+                    Path(root),
+                    out_dir,
+                    source_locale,
+                    target_locale,
+                )
+            else:
+                try:
+                    rel = src_res.path.relative_to(root)
+                except ValueError:
+                    rel = Path(src_res.path.name)
+                out_path = out_dir / rel
+                name = out_path.name
+                out_path = out_path.with_name(name.replace(source_locale, target_locale))
             out_path.parent.mkdir(parents=True, exist_ok=True)
 
             translated_entries = {}
@@ -110,6 +121,20 @@ def translate_resource_files(
                     except ValueError as exc:
                         msg = str(exc)
                         raise ValueError(msg) from exc
+
+            try:
+                if translation_adapter is None:
+                    translation_adapter = cli.create_translation_engine(
+                        normalized_engine,
+                        str(actual_model),
+                        device,
+                        batch_size,
+                    )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                report.failed += 1
+                if report.details is not None:
+                    report.details.append({"file": str(src_res.path), "error": str(exc)})
+                continue
 
             for key, value in src_doc.entries.items():
                 if str(key).startswith("@"):
@@ -140,6 +165,7 @@ def translate_resource_files(
                                 device=device,
                                 batch_size=batch_size,
                                 engine=normalized_engine,
+                                adapter=translation_adapter,
                             )
                             cache.set(
                                 text,
@@ -163,6 +189,7 @@ def translate_resource_files(
                             device=device,
                             batch_size=batch_size,
                             engine=normalized_engine,
+                            adapter=translation_adapter,
                         )
                     translated_entries[key] = translated_text
                     report.translated += 1

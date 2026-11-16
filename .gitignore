@@ -30,6 +30,7 @@ __pycache__/
 # ----------------------------
 build/
 dist/
+/dist-validation-final/
 site/
 .eggs/
 *.egg

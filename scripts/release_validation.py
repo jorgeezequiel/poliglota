@@ -260,6 +260,11 @@ def prepare_local_release(root: Path, dist_dir: Path, report_path: Path) -> dict
     version = assert_project_versions_match(root)
     dist_dir = dist_dir.resolve() / f"poliglota-{version}"
     checks: list[dict[str, object]] = []
+    if dist_dir.exists():
+        raise FileExistsError(
+            f"Refusing to overwrite existing release artifacts: {dist_dir}. "
+            "Choose a new --dist-dir or move the existing artifacts yourself."
+        )
 
     def run_check(label: str, arguments: list[str]) -> None:
         completed = subprocess.run(  # noqa: S603 -- fixed internal quality commands.
@@ -283,15 +288,27 @@ def prepare_local_release(root: Path, dist_dir: Path, report_path: Path) -> dict
         if completed.returncode:
             raise RuntimeError(f"{label} failed with exit code {completed.returncode}")
 
-    run_check("ruff lint", ["-m", "ruff", "check", "poliglota", "tests"])
-    run_check("ruff format", ["-m", "ruff", "format", "--check", "poliglota", "tests"])
+    run_check(
+        "ruff lint",
+        ["-m", "ruff", "check", "poliglota", "tests", "scripts/release_validation.py"],
+    )
+    run_check(
+        "ruff format",
+        [
+            "-m",
+            "ruff",
+            "format",
+            "--check",
+            "poliglota",
+            "tests",
+            "scripts/release_validation.py",
+        ],
+    )
     run_check(
         "version consistency",
         ["-m", "pytest", "tests/test_version_consistency.py", "-q"],
     )
     run_check("pytest", ["-m", "pytest", "-q"])
-    if dist_dir.exists():
-        raise FileExistsError(f"Refusing to overwrite existing release artifacts: {dist_dir}")
     with tempfile.TemporaryDirectory(prefix=f"poliglota-{version}-build-") as staging_name:
         staging_dir = Path(staging_name)
         run_check(
@@ -536,11 +553,13 @@ def main() -> int:
                 args.asset_count,
                 args.expected_state,
             )
-            print(f"Verified draft release {args.tag} with {args.asset_count} assets.")
+            print(
+                f"Verified {args.expected_state} release {args.tag} with {args.asset_count} assets."
+            )
             return 0
         parser.error(f"Unsupported command: {args.command}")
         return 2
-    except (FileNotFoundError, ValueError, OSError) as exc:
+    except (FileNotFoundError, ValueError, OSError, RuntimeError) as exc:
         print(f"release validation failed: {exc}", file=sys.stderr)
         return 1
 

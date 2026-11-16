@@ -141,6 +141,41 @@ def test_distribution_validation_rejects_corrupted_archives(tmp_path: Path) -> N
         validate_distribution_artifacts(dist_dir, "0.0.2")
 
 
+def test_distribution_validation_rejects_missing_artifacts(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+
+    with pytest.raises(ValueError, match="Expected exactly one wheel"):
+        validate_distribution_artifacts(dist_dir, "0.0.3")
+
+
+def test_prepare_local_refuses_to_overwrite_existing_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts.release_validation import prepare_local_release
+
+    (tmp_path / "VERSION").write_text("0.0.3\n", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.0.3"\n', encoding="utf-8")
+    package = tmp_path / "poliglota"
+    package.mkdir()
+    (package / "__init__.py").write_text('__version__ = "0.0.3"\n', encoding="utf-8")
+    artifacts = tmp_path / "dist" / "poliglota-0.0.3"
+    artifacts.mkdir(parents=True)
+    sentinel = artifacts / "previous-artifact.txt"
+    sentinel.write_text("preserve", encoding="utf-8")
+    monkeypatch.setattr(
+        "scripts.release_validation.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("checks should not run before overwrite refusal"),
+    )
+
+    with pytest.raises(FileExistsError, match=r"Refusing to overwrite.*Choose a new --dist-dir"):
+        prepare_local_release(tmp_path, tmp_path / "dist", tmp_path / "report.json")
+
+    assert sentinel.read_text(encoding="utf-8") == "preserve"
+    assert not (tmp_path / "report.json").exists()
+
+
 def test_fetch_github_release_state_handles_valid_responses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -274,6 +309,15 @@ def test_fetch_github_release_status_handles_error_and_invalid_json(
 
     monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_404)
     assert fetch_github_release_state("jorgeezequiel/poliglota", "v0.0.2")[0] == 404
+
+    for error_code in (401, 403):
+
+        def fake_auth_error(request: object, timeout: float, *, code: int = error_code) -> None:
+            raise FakeHTTPError(code)
+
+        monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_auth_error)
+        with pytest.raises(ValueError, match=f"GitHub API {error_code}"):
+            fetch_github_release_state("jorgeezequiel/poliglota", "v0.0.2")
 
     monkeypatch.setattr("scripts.release_validation.urllib.request.urlopen", fake_500)
     try:

@@ -824,20 +824,46 @@ def _translate_with_placeholders(
     masked_text, placeholders_map = protector.mask(text)
     original_count = len(placeholders_map)
     started = time.perf_counter()
-    translated_masked = adapter.translate(
-        masked_text,
-        _locale_to_engine_code(source_locale),
-        _locale_to_engine_code(target_locale),
-    )
-    elapsed_ms = (time.perf_counter() - started) * 1000
-    restored = protector.restore(translated_masked, placeholders_map)
-    restore_issues = protector.validate_preservation(text, restored)
-    if restore_issues:
-        logger.warning(
-            "Placeholder restoration warnings: %s",
-            "; ".join(restore_issues),
-            extra={"issues": restore_issues, "preserved": original_count},
+    if placeholders_map:
+        # Replace long UUID markers with short, tokenizer-friendly sentinels.
+        # They stay in the sentence so the model retains grammatical context,
+        # while being short enough for NLLB to copy reliably.
+        marker_templates = ("<PH{index}>", "ZXQ{index}XZ", "PHX{index}Q")
+        restored = ""
+        for template in marker_templates:
+            runtime_markers: dict[str, str] = {}
+            attempt_text = masked_text
+            for index, (token, placeholder) in enumerate(placeholders_map.items()):
+                marker_index = index
+                marker = template.format(index=marker_index)
+                while marker in text or marker in runtime_markers:
+                    marker_index += 1
+                    marker = template.format(index=marker_index)
+                runtime_markers[marker] = placeholder
+                attempt_text = attempt_text.replace(token, marker, 1)
+            translated_masked = adapter.translate(
+                attempt_text,
+                _locale_to_engine_code(source_locale),
+                _locale_to_engine_code(target_locale),
+            )
+            if all(translated_masked.count(marker) == 1 for marker in runtime_markers):
+                restored = translated_masked
+                for marker, placeholder in runtime_markers.items():
+                    restored = restored.replace(marker, placeholder)
+                break
+        else:
+            msg = "Translation model did not preserve placeholders after three safe attempts."
+            raise RuntimeError(msg)
+    else:
+        restored = adapter.translate(
+            masked_text,
+            _locale_to_engine_code(source_locale),
+            _locale_to_engine_code(target_locale),
         )
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    restore_issues = protector.validate_preservation(text, restored, placeholders_map)
+    if restore_issues:
+        raise RuntimeError("Placeholder preservation failed: " + "; ".join(restore_issues))
     logger.info(
         "%s inference completed with placeholder restoration",
         normalized_engine,
@@ -1012,6 +1038,16 @@ def _get_engine(
     raise ValueError(msg)
 
 
+def create_translation_engine(
+    engine_name: str,
+    model_name: str,
+    device: str,
+    batch_size: int,
+) -> Any:
+    """Create one reusable engine instance for a multi-message translation job."""
+    return _get_engine(engine_name, model_name, device, batch_size)
+
+
 def _get_marian_adapter(model_name: str, device: str) -> Any:
     """Create and initialize a Marian adapter for the current environment."""
     try:
@@ -1160,6 +1196,7 @@ def translate_with_placeholders(
     device: str,
     batch_size: int,
     engine: str = "marian",
+    adapter: Any | None = None,
 ) -> tuple[str, dict[str, int], float]:
     """Public wrapper for single-string placeholder-aware translation."""
     return _translate_with_placeholders(
@@ -1171,6 +1208,7 @@ def translate_with_placeholders(
         device=device,
         batch_size=batch_size,
         engine=engine,
+        adapter=adapter,
     )
 
 

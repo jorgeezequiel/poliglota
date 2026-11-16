@@ -186,6 +186,53 @@ class TestXMLRoundTrip:
         doc2 = adapter.read(output_file)
         assert set(doc2.entries.keys()) == set(doc.entries.keys())
 
+    def test_android_values_resources_use_names_and_locale_qualifiers(self, tmp_path: Path) -> None:
+        """Android values XML keeps resource IDs and targets the requested values directory."""
+        from poliglota.core.format import LocalizedDocument
+        from poliglota.core.locale import Locale
+
+        adapter = XMLFormatAdapter()
+        root = tmp_path / "res"
+        source = root / "values-pt-rBR" / "strings.xml"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            '<resources><string name="hello">Olá %1$s</string>'
+            '<string name="brand" translatable="false">PazCall</string>'
+            '<string name="ref">@string/hello</string></resources>',
+            encoding="utf-8",
+        )
+
+        resources = adapter.discover(root)
+        assert len(resources) == 1
+        assert resources[0].locale.code == "pt_BR"
+        document = adapter.read(source)
+        assert document.entries == {"hello": "Olá %1$s", "ref": "@string/hello"}
+
+        output = adapter.target_path(resources[0], root, tmp_path / "out", "pt_br", "es_ES")
+        assert output == tmp_path / "out" / "values-es-rES" / "strings.xml"
+        translated = LocalizedDocument(
+            locale=Locale("es_ES"),
+            entries={"hello": "Hola %1$s", "ref": "@string/hello"},
+            metadata=document.metadata,
+        )
+        adapter.write(translated, output)
+        result = adapter.read(output)
+        assert result.entries == translated.entries
+        xml_text = output.read_text(encoding="utf-8")
+        assert 'name="brand" translatable="false">PazCall</string>' in xml_text
+        assert 'name="hello">Hola %1$s</string>' in xml_text
+        assert 'name="ref">@string/hello</string>' in xml_text
+
+    def test_android_default_values_directory_is_not_assigned_a_fake_locale(
+        self, tmp_path: Path
+    ) -> None:
+        """The unqualified Android values directory has no inferable source locale."""
+        adapter = XMLFormatAdapter()
+        path = tmp_path / "values" / "strings.xml"
+        path.parent.mkdir()
+        path.write_text('<resources><string name="x">x</string></resources>', encoding="utf-8")
+        assert adapter._infer_locale_from_path(path) is None
+
 
 class TestRegistryIntegration:
     """Test FormatRegistry discovery and adapter registration."""

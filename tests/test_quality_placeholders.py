@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from poliglota.quality.placeholders import ArbPlaceholderProtector, PlaceholderProtectorRegistry
 
 
@@ -90,6 +93,26 @@ def test_arb_protector_mask_empty_string() -> None:
 
     assert masked == ""
     assert placeholders_map == {}
+
+
+def test_android_printf_placeholders_are_masked_and_preserved() -> None:
+    protector = ArbPlaceholderProtector()
+    source = "Version %1$s; count %d; %% literal; user {user_id}."
+    masked, placeholders = protector.mask(source)
+    assert "%1$s" not in masked
+    assert "%d" not in masked
+    assert "{user_id}" not in masked
+    translated = masked.replace("Version", "Versión").replace("count", "cantidad")
+    restored = protector.restore(translated, placeholders)
+    assert restored == "Versión %1$s; cantidad %d; %% literal; user {user_id}."
+    assert protector.validate_preservation(source, restored, placeholders) == []
+
+
+def test_printf_placeholder_removal_or_duplication_is_rejected() -> None:
+    protector = ArbPlaceholderProtector()
+    source = "Value %1$s and %d"
+    assert protector.validate_preservation(source, "Valor %1$s y texto")
+    assert protector.validate_preservation(source, "Valor %1$s %1$s y %d")
 
 
 def test_arb_protector_mask_no_placeholders() -> None:
@@ -207,6 +230,91 @@ def test_arb_protector_validates_placeholders_without_comparing_translated_prose
 
     assert protector.validate_preservation("Hello {name} {count}", "Hola {name} {count}") == []
     assert protector.validate_preservation("Hello {name} {name}", "Hola {name}")
+
+
+def test_arb_protector_preserves_repeated_and_unicode_placeholders() -> None:
+    protector = ArbPlaceholderProtector()
+    original = "Olá, {user_name2}! Olá novamente, {user_name2}: {item_7}."
+    masked, placeholders_map = protector.mask(original)
+    translated = masked.replace("Olá", "こんにちは")
+
+    restored = protector.restore(translated, placeholders_map)
+
+    assert restored == "こんにちは, {user_name2}! こんにちは novamente, {user_name2}: {item_7}."
+    assert protector.validate_preservation(original, restored, placeholders_map) == []
+
+
+def test_arb_protector_restores_marker_with_removed_prefix_underscores() -> None:
+    protector = ArbPlaceholderProtector()
+    _, placeholders_map = protector.mask("Hello {name}")
+    token = next(iter(placeholders_map))
+
+    restored = protector.restore(token.replace("__PH_", "PH_"), placeholders_map)
+
+    assert restored == "{name}"
+    assert protector.validate_preservation("Hello {name}", restored, placeholders_map) == []
+
+
+def test_arb_protector_rejects_missing_duplicate_and_incomplete_placeholders() -> None:
+    protector = ArbPlaceholderProtector()
+    _, placeholders_map = protector.mask("{first} and {second}")
+    first, _second = placeholders_map
+
+    assert protector.validate_preservation("{first} and {second}", "solo {first}", placeholders_map)
+    assert protector.validate_preservation(
+        "{first} and {second}", "{first} {first} {second}", placeholders_map
+    )
+    damaged = f"{placeholders_map[first]} and PH_invalid_marker"
+    assert protector.validate_preservation("{first} and {second}", damaged, placeholders_map)
+
+
+def test_arb_protector_reports_internal_marker_left_after_restore() -> None:
+    protector = ArbPlaceholderProtector()
+    _, placeholders_map = protector.mask("Hello {name}")
+    token = next(iter(placeholders_map))
+    nonce = token.rsplit("_", 1)[-1]
+    translated = f"Hola PH_{nonce} {placeholders_map[token]}"
+
+    issues = protector.validate_preservation("Hello {name}", translated, placeholders_map)
+
+    assert any("token remains" in issue for issue in issues)
+
+
+def test_arb_protector_avoids_collision_with_marker_like_source_text() -> None:
+    protector = ArbPlaceholderProtector()
+    colliding_nonce = "0" * 31 + "1"
+    unique_nonce = "0" * 31 + "2"
+    original = f"Literal __PH_{colliding_nonce} plus {{name}}"
+    uuids = iter(
+        [
+            SimpleNamespace(hex=colliding_nonce),
+            SimpleNamespace(hex=unique_nonce),
+        ]
+    )
+
+    with patch("poliglota.quality.placeholders.uuid.uuid4", side_effect=lambda: next(uuids)):
+        masked, placeholders_map = protector.mask(original)
+
+    assert f"__PH_{colliding_nonce}" in masked
+    assert list(placeholders_map) == [f"__PH_{unique_nonce}"]
+    restored = protector.restore(masked, placeholders_map)
+    assert restored == original
+    assert protector.validate_preservation(original, restored, placeholders_map) == []
+
+
+def test_arb_protector_rejects_unexpected_placeholder() -> None:
+    protector = ArbPlaceholderProtector()
+
+    assert protector.validate_preservation("Hello", "Hola {unexpected}")
+
+
+def test_arb_protector_does_not_treat_percent_prose_as_printf_placeholders() -> None:
+    protector = ArbPlaceholderProtector()
+    source = "You spent {percent}% of your budget. % change from last month."
+    translated = "Gastaste {percent}% de tu presupuesto. Variación respecto del mes pasado."
+
+    assert protector.validate_preservation(source, translated) == []
+    assert protector.detect(source) == {"percent"}
 
 
 def test_arb_protector_validate_restore_mismatch() -> None:

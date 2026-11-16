@@ -49,7 +49,10 @@ class XMLFormatAdapter:
                         path=xml_file,
                         locale=Locale(locale),
                         format=self.name,
-                        attributes={"directory": str(xml_file.parent.relative_to(root))},
+                        attributes={
+                            "directory": str(xml_file.parent.relative_to(root)),
+                            "android_values": self._android_values_directory(xml_file) or "",
+                        },
                     )
                 )
 
@@ -75,7 +78,10 @@ class XMLFormatAdapter:
         locale_code = self._infer_locale_from_path(path)
 
         # Extract translatable text from all elements
-        entries = self._extract_text_entries(root)
+        if self._android_values_directory(path):
+            entries = self._extract_android_string_entries(root)
+        else:
+            entries = self._extract_text_entries(root)
 
         # Preserve original XML tree and structure for write-back
         metadata = {
@@ -102,7 +108,12 @@ class XMLFormatAdapter:
         if original_xml:
             # Parse original and update text nodes
             root = defused_fromstring(original_xml)
-            self._update_text_entries(root, dict(document.entries))
+            if self._android_values_directory(path) or self._android_values_directory_from_xml(
+                root
+            ):
+                self._update_android_string_entries(root, dict(document.entries))
+            else:
+                self._update_text_entries(root, dict(document.entries))
         else:
             # Fallback: create minimal XML structure
             root = ET.Element("root")
@@ -117,6 +128,68 @@ class XMLFormatAdapter:
         tree = ET.ElementTree(root)
         ET.indent(tree, space="  ")
         tree.write(path, encoding="utf-8", xml_declaration=True)
+
+    @staticmethod
+    def target_path(
+        resource: LocalizedResource,
+        root: Path,
+        output_dir: Path,
+        source_locale: str,
+        target_locale: str,
+    ) -> Path:
+        """Build an output path, translating Android values qualifiers when present."""
+        relative = resource.path.relative_to(root)
+        values_dir = resource.attributes.get("android_values")
+        if values_dir:
+            parts = list(relative.parts)
+            index = len(parts) - 2
+            target = target_locale.replace("-", "_").split("_")
+            qualifier = target[0].lower()
+            if len(target) > 1:
+                qualifier += f"-r{target[1].upper()}"
+            parts[index] = f"values-{qualifier}"
+            return output_dir.joinpath(*parts)
+        output = output_dir / relative
+        return output.with_name(output.name.replace(source_locale, target_locale))
+
+    @staticmethod
+    def _android_values_directory(path: Path) -> str | None:
+        """Return an Android ``values`` directory name for standard resource paths."""
+        candidate = path.parent.name
+        if re.fullmatch(r"values(?:-[a-z]{2,3}(?:-r[A-Za-z]{2,3})?)?", candidate):
+            return candidate
+        return None
+
+    @staticmethod
+    def _android_values_directory_from_xml(root: ET.Element) -> bool:
+        """Identify Android resource XML by its standard root and named string nodes."""
+        return root.tag == "resources" and any(
+            child.tag == "string" and "name" in child.attrib for child in root
+        )
+
+    @staticmethod
+    def _extract_android_string_entries(root: ET.Element) -> dict[str, str]:
+        """Extract only translatable Android string resources, keyed by resource name."""
+        return {
+            child.attrib["name"]: child.text or ""
+            for child in root
+            if child.tag == "string"
+            and child.attrib.get("name")
+            and child.attrib.get("translatable", "true").lower() != "false"
+            and (child.text or "").strip()
+        }
+
+    @staticmethod
+    def _update_android_string_entries(root: ET.Element, entries: dict[str, Any]) -> None:
+        """Update only named Android string resources, preserving other XML nodes."""
+        for child in root:
+            name = child.attrib.get("name")
+            if (
+                child.tag == "string"
+                and name in entries
+                and child.attrib.get("translatable", "true").lower() != "false"
+            ):
+                child.text = str(entries[name])
 
     @staticmethod
     def _extract_text_entries(element: ET.Element, prefix: str = "") -> dict[str, Any]:
@@ -194,6 +267,12 @@ class XMLFormatAdapter:
 
         Returns None if no valid locale pattern found.
         """
+        values_dir = XMLFormatAdapter._android_values_directory(path)
+        if values_dir and values_dir != "values":
+            match = re.fullmatch(r"values-([a-z]{2,3})(?:-r([A-Za-z]{2,3}))?", values_dir)
+            if match:
+                language, region = match.groups()
+                return f"{language}_{region}" if region else language
         stem = path.stem
 
         # Pattern: {name}_{locale_code}.xml

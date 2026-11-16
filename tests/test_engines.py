@@ -383,7 +383,7 @@ class TestTranslateCommand:
 
     def test_translate_with_placeholders_preserves_structured_tokens(self) -> None:
         adapter = Mock()
-        adapter.translate.return_value = "Olá {name}!"
+        adapter.translate.side_effect = lambda text, *_args: text.replace("Hello", "Olá")
 
         with patch.object(cli_module, "_get_marian_adapter", return_value=adapter):
             translated, placeholder_stats, elapsed = cli_module._translate_with_placeholders(
@@ -396,7 +396,7 @@ class TestTranslateCommand:
                 batch_size=8,
             )
 
-        assert translated == "Olá {name}!"
+        assert translated == "Olá {name}"
         assert placeholder_stats["preserved"] == 1
         assert elapsed >= 0
 
@@ -421,7 +421,7 @@ class TestTranslateCommand:
 
     def test_pytorch_translation_preserves_placeholders(self) -> None:
         adapter = Mock()
-        adapter.translate.side_effect = lambda masked, *_args: masked
+        adapter.translate.side_effect = lambda text, *_args: text.replace("Hello", "Hola")
 
         translated, stats, _ = cli_module._translate_with_placeholders(
             "Hello {user_name}, {count}!",
@@ -435,8 +435,89 @@ class TestTranslateCommand:
             adapter=adapter,
         )
 
-        assert translated == "Hello {user_name}, {count}!"
+        assert translated == "Hola {user_name}, {count}!"
         assert stats["preserved"] == 2
+
+    def test_pytorch_translation_never_sends_placeholders_to_model(self) -> None:
+        adapter = Mock()
+        adapter.translate.side_effect = lambda text, *_args: text.replace("Hello", "Hola")
+
+        translated, stats, _ = cli_module._translate_with_placeholders(
+            "Hello {name}!",
+            "en_US",
+            "es_ES",
+            preserve_placeholders=True,
+            model_name="facebook/nllb-200-distilled-600M",
+            device="cpu",
+            batch_size=1,
+            engine="pytorch",
+            adapter=adapter,
+        )
+
+        assert translated == "Hola {name}!"
+        assert stats["preserved"] == 1
+        assert adapter.translate.call_args.args[0] == "Hello <PH0>!"
+
+    def test_pytorch_translation_avoids_collision_with_marker_like_source_text(self) -> None:
+        adapter = Mock()
+        adapter.translate.side_effect = lambda text, *_args: text
+
+        translated, _, _ = cli_module._translate_with_placeholders(
+            "Literal <PH0> and {name}",
+            "en_US",
+            "es_ES",
+            preserve_placeholders=True,
+            model_name="facebook/nllb-200-distilled-600M",
+            device="cpu",
+            batch_size=1,
+            engine="pytorch",
+            adapter=adapter,
+        )
+
+        assert translated == "Literal <PH0> and {name}"
+        assert adapter.translate.call_args.args[0] == "Literal <PH0> and <PH1>"
+
+    def test_pytorch_translation_retries_with_alternate_marker_when_model_drops_one(self) -> None:
+        adapter = Mock()
+        translations = iter(["Texto sem placeholder", None])
+        adapter.translate.side_effect = lambda text, *_args: next(translations) or text
+
+        translated, stats, _ = cli_module._translate_with_placeholders(
+            "Hello {name}",
+            "en_US",
+            "es_ES",
+            preserve_placeholders=True,
+            model_name="facebook/nllb-200-distilled-600M",
+            device="cpu",
+            batch_size=1,
+            engine="pytorch",
+            adapter=adapter,
+        )
+
+        assert translated == "Hello {name}"
+        assert stats["preserved"] == 1
+        assert adapter.translate.call_count == 2
+        assert (
+            adapter.translate.call_args_list[0].args[0]
+            != adapter.translate.call_args_list[1].args[0]
+        )
+
+    def test_pytorch_translation_fails_after_all_marker_retries_are_corrupted(self) -> None:
+        adapter = Mock()
+        adapter.translate.side_effect = ["sem marcador", "sem marcador", "sem marcador"]
+
+        with pytest.raises(RuntimeError, match="after three safe attempts"):
+            cli_module._translate_with_placeholders(
+                "Hello {name}",
+                "en_US",
+                "es_ES",
+                preserve_placeholders=True,
+                model_name="facebook/nllb-200-distilled-600M",
+                device="cpu",
+                batch_size=1,
+                engine="pytorch",
+                adapter=adapter,
+            )
 
     def test_translate_command_success_for_plain_text(
         self,

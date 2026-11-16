@@ -491,13 +491,11 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             tokenized = {key: value.to(self.device) for key, value in tokenized.items()}
 
         generation_kwargs: dict[str, Any] = {
-            "num_beams": 4,
+            "num_beams": 5,
             "max_new_tokens": 128,
             "do_sample": False,
-            "repetition_penalty": 1.15,
-            "no_repeat_ngram_size": 3,
             "length_penalty": 1.0,
-            "early_stopping": True,
+            "early_stopping": False,
         }
 
         if self._is_mbart_model():

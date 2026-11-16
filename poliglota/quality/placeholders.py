@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import re
 import uuid
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class ArbPlaceholderProtector:
@@ -15,6 +19,14 @@ class ArbPlaceholderProtector:
 
     # ARB placeholder syntax: {identifier}
     _PLACEHOLDER_PATTERN = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
+    # Android/printf formatting tokens such as %s, %d and %1$s.
+    _PRINTF_PLACEHOLDER_PATTERN = (
+        # A space is technically a printf flag, but accepting it here makes
+        # ordinary prose such as "% of the budget" look like the token "% o".
+        # Android's resource placeholders use compact specifiers, so whitespace
+        # is intentionally excluded to avoid false positives in localized text.
+        r"%(?:\d+\$)?[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[diuoxXfFeEgGaAcspn]"
+    )
 
     def __init__(self, token_prefix: str | None = None) -> None:
         """Initialize the protector.
@@ -52,11 +64,21 @@ class ArbPlaceholderProtector:
 
         def replace_placeholder(match: re.Match[str]) -> str:
             full_placeholder = match.group(0)  # e.g., "{name}"
-            token = f"{self.token_prefix}{uuid.uuid4().hex[:8]}"
+            while True:
+                nonce = uuid.uuid4().hex
+                token = f"{self.token_prefix}{nonce}"
+                marker_pattern = rf"_*PH_{re.escape(nonce)}"
+                if (
+                    token not in placeholders_map
+                    and token not in text
+                    and re.search(marker_pattern, text, flags=re.IGNORECASE) is None
+                ):
+                    break
             placeholders_map[token] = full_placeholder
             return token
 
-        masked_text = re.sub(self._PLACEHOLDER_PATTERN, replace_placeholder, text)
+        combined_pattern = rf"{self._PLACEHOLDER_PATTERN}|{self._PRINTF_PLACEHOLDER_PATTERN}"
+        masked_text = re.sub(combined_pattern, replace_placeholder, text)
         return masked_text, placeholders_map
 
     def restore(self, text: str, placeholders_map: dict[str, str]) -> str:
@@ -112,6 +134,9 @@ class ArbPlaceholderProtector:
         remaining = self.detect(masked)
         if remaining:
             issues.append(f"Placeholders still present in masked text: {sorted(remaining)}")
+        remaining_printf = re.findall(self._PRINTF_PLACEHOLDER_PATTERN, masked)
+        if remaining_printf:
+            issues.append(f"Printf placeholders still present in masked text: {remaining_printf}")
 
         return issues
 
@@ -149,15 +174,26 @@ class ArbPlaceholderProtector:
 
         return issues
 
-    def validate_preservation(self, original: str, translated: str) -> list[str]:
+    def validate_preservation(
+        self,
+        original: str,
+        translated: str,
+        placeholders_map: Mapping[str, str] | None = None,
+    ) -> list[str]:
         """Check placeholder multiplicity while allowing translated prose to differ."""
         original_counts: dict[str, int] = {}
         translated_counts: dict[str, int] = {}
-        for value in re.findall(self._PLACEHOLDER_PATTERN, original):
-            placeholder = "{" + value + "}"
+        original_placeholders = re.findall(self._PRINTF_PLACEHOLDER_PATTERN, original)
+        translated_placeholders = re.findall(self._PRINTF_PLACEHOLDER_PATTERN, translated)
+        original_placeholders.extend(
+            "{" + value + "}" for value in re.findall(self._PLACEHOLDER_PATTERN, original)
+        )
+        translated_placeholders.extend(
+            "{" + value + "}" for value in re.findall(self._PLACEHOLDER_PATTERN, translated)
+        )
+        for placeholder in original_placeholders:
             original_counts[placeholder] = original_counts.get(placeholder, 0) + 1
-        for value in re.findall(self._PLACEHOLDER_PATTERN, translated):
-            placeholder = "{" + value + "}"
+        for placeholder in translated_placeholders:
             translated_counts[placeholder] = translated_counts.get(placeholder, 0) + 1
 
         issues = [
@@ -166,8 +202,16 @@ class ArbPlaceholderProtector:
             for placeholder, count in original_counts.items()
             if translated_counts.get(placeholder, 0) != count
         ]
-        if self.token_prefix in translated:
+        unexpected = translated_counts.keys() - original_counts.keys()
+        if unexpected:
+            issues.append(f"Unexpected placeholders in translated text: {sorted(unexpected)}")
+        if any(token in translated for token in (placeholders_map or {})):
             issues.append("Placeholder tokens still present in translated text")
+        for token in placeholders_map or {}:
+            nonce = token.rsplit("_", 1)[-1]
+            damaged_marker = re.compile(rf"(?i)_*PH_{re.escape(nonce)}")
+            if damaged_marker.search(translated):
+                issues.append(f"Placeholder token remains in translated text: {token}")
         return issues
 
 
