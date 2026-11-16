@@ -52,6 +52,8 @@ _MODEL_CATALOG: Final[dict[str, set[tuple[str, str]]]] = {
         ("it", "pt"),
         ("pt", "ru"),
         ("ru", "pt"),
+        ("pt", "pl"),
+        ("pl", "pt"),
     },
 }
 
@@ -112,6 +114,11 @@ def supported_models_for_pair(source_lang: str, target_lang: str) -> list[str]:
         if (source, target) in supported_pairs:
             models.append(model)
     return models
+
+
+def supported_pairs_for_model(model: str) -> list[tuple[str, str]]:
+    """Return the catalogued translation directions for a model."""
+    return sorted(_MODEL_CATALOG.get(model, set()))
 
 
 def validate_model_compatibility(

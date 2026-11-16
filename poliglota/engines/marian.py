@@ -34,29 +34,12 @@ from poliglota.engines.protocol import (
     TranslationRequest,
     TranslationResult,
 )
+from poliglota.model_catalog import supported_pairs_for_model
 
 logger = logging.getLogger(__name__)
 
 _INFERENCE_WARNING_MS = 5000
 _PLACEHOLDER_TAG_RE = re.compile(r"</?(en|pt|es|fr)>", flags=re.IGNORECASE)
-_SUPPORTED_PAIRS: list[tuple[str, str]] = [
-    # Existing OPUS-MT pairs
-    ("en", "pt"),
-    ("pt", "en"),
-    ("en", "es"),
-    ("es", "en"),
-    ("en", "fr"),
-    ("fr", "en"),
-    ("pt", "es"),
-    ("es", "pt"),
-    # M2M100 pairs (pt source to 6 missing targets)
-    ("pt", "de"),
-    ("pt", "ja"),
-    ("pt", "ko"),
-    ("pt", "pl"),
-    ("pt", "ru"),
-    ("pt", "it"),
-]
 _SUPPORTED_MODELS: dict[str, tuple[str, str]] = {
     # Helsinki-NLP OPUS-MT models (existing)
     "Helsinki-NLP/opus-mt-tc-big-en-pt": ("en", "pt"),
@@ -97,7 +80,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             "model_name": model_name,
             "model_size_mb": 0,
             "device": self.device,
-            "pairs_count": len(_SUPPORTED_PAIRS),
+            "pairs_count": len(supported_pairs_for_model(model_name)),
             "last_inference_time_ms": 0,
         }
 
@@ -149,18 +132,28 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
 
     def engine_language(self, locale: object) -> str:
         """Return the engine language code for the locale in a best-effort manner."""
-        if isinstance(locale, str):
-            code = locale.strip().lower()
-            if code in {"en", "pt", "es", "fr"}:
-                return code
+        code = self._language_code(locale)
+        supported_languages = {language for pair in self.get_supported_pairs() for language in pair}
+        if code in supported_languages:
+            return code
         msg = f"Unsupported locale for Marian adapter: {locale!r}"
         raise ValueError(msg)
 
+    @staticmethod
+    def _language_code(value: object) -> str:
+        """Normalize a locale string or core Locale instance to its language code."""
+        if isinstance(value, str):
+            raw = value
+        else:
+            raw = getattr(value, "code", None) or getattr(value, "language", None)
+        if not isinstance(raw, str):
+            return ""
+        return raw.strip().lower().replace("-", "_").split("_", maxsplit=1)[0]
+
     def supports(self, source: object, target: object) -> bool:
         """Return whether a language pair is supported."""
-        source_code = str(source).lower() if source is not None else ""
-        target_code = str(target).lower() if target is not None else ""
-        return (source_code, target_code) in _SUPPORTED_PAIRS
+        pair = (self._language_code(source), self._language_code(target))
+        return pair in self.get_supported_pairs()
 
     def load_model(
         self,
@@ -217,9 +210,10 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
 
     def _validate_pair(self, source_lang: str, target_lang: str) -> None:
         """Validate a requested translation pair against the known supported matrix."""
-        pair = (source_lang.lower(), target_lang.lower())
-        if pair not in _SUPPORTED_PAIRS:
-            supported = ", ".join(f"{src}->{dst}" for src, dst in _SUPPORTED_PAIRS)
+        pair = (self._language_code(source_lang), self._language_code(target_lang))
+        supported_pairs = self.get_supported_pairs()
+        if pair not in supported_pairs:
+            supported = ", ".join(f"{src}->{dst}" for src, dst in supported_pairs)
             msg = (
                 f"Unsupported translation pair '{source_lang}->{target_lang}'. "
                 f"Supported pairs: {supported}"
@@ -227,8 +221,8 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             raise ValueError(msg)
 
     def get_supported_pairs(self) -> list[tuple[str, str]]:
-        """Return the hardcoded set of supported translation pairs."""
-        return list(_SUPPORTED_PAIRS)
+        """Return the supported language pairs declared for this model."""
+        return supported_pairs_for_model(self.model_name)
 
     def _strip_known_placeholders(self, text: str) -> tuple[str, list[tuple[int, str]]]:
         """Remove known language tags while recording their original positions."""

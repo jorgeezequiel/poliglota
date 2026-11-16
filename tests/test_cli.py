@@ -90,9 +90,30 @@ def test_select_default_motor_pt_to_ja_prefers_nllb() -> None:
 
 
 @pytest.mark.unit
-def test_select_default_motor_rejects_reverse_direction() -> None:
-    with pytest.raises(ValueError, match="Unsupported default motor pair"):
-        cli_module._select_default_motor("pt_BR", "en_US")
+def test_select_default_motor_uses_catalogued_reverse_direction() -> None:
+    assert cli_module._select_default_motor("pt_BR", "en_US") == (
+        "Helsinki-NLP/opus-mt-tc-big-en-pt"
+    )
+
+
+@pytest.mark.parametrize(("source", "target"), [("de", "pt"), ("pl", "pt"), ("pt", "pl")])
+def test_select_default_motor_finds_cached_m2m_for_catalogued_pair(
+    mock_environ: Callable[[str | None], None],
+    mock_hf_cache_path: Path,
+    source: str,
+    target: str,
+) -> None:
+    mock_environ("1")
+    cache_dir = mock_hf_cache_path / "hub" / "models--facebook--m2m100_418M"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    assert cli_module._select_default_motor(source, target) == "facebook/m2m100_418M"
+
+
+def test_m2m100_catalog_includes_all_adapter_directions() -> None:
+    from poliglota.model_catalog import supported_pairs_for_model
+
+    assert {("pt", "pl"), ("pl", "pt")} <= set(supported_pairs_for_model("facebook/m2m100_418M"))
 
 
 @pytest.mark.unit

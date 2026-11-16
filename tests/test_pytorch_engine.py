@@ -89,6 +89,42 @@ def test_mbart_locale_code_uses_tokenizer_specific_variant() -> None:
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+def test_m2m100_tokenizer_and_target_language_are_configured() -> None:
+    tokenizer = MagicMock()
+    tokenizer.get_lang_id.return_value = 128023
+    tokenizer.return_value = {"input_ids": [[1, 2]], "attention_mask": [[1, 1]]}
+    tokenizer.batch_decode.return_value = ["presupuesto"]
+    model = MagicMock()
+    model.generate.return_value = [[3, 4]]
+
+    engine = PyTorchTranslationEngine("facebook/m2m100_418M", device="cpu")
+    engine._model = model
+    engine._tokenizer = tokenizer
+
+    result = engine._generate_batch(["Budget"], "en_US", "es_ES")
+
+    assert result == ["presupuesto"]
+    assert tokenizer.src_lang == "en"
+    tokenizer.assert_called_once_with(
+        ["Budget"],
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=512,
+    )
+    assert model.generate.call_args.kwargs["forced_bos_token_id"] == 128023
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
+def test_m2m100_supports_only_catalogued_pairs() -> None:
+    engine = PyTorchTranslationEngine("facebook/m2m100_418M", device="cpu")
+
+    assert engine.supports("pl_PL", "pt_BR")
+    assert ("pl", "pt") in engine.get_supported_pairs()
+    assert not engine.supports("xx", "pt")
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
 def test_device_detection_prefers_gpu_if_available() -> None:
     with (
         patch("poliglota.engines.pytorch_engine.detect_device", return_value="cuda"),

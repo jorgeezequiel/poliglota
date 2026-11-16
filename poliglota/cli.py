@@ -21,6 +21,7 @@ from .config import DEFAULT_ROOT, DEFAULT_SOURCE_LOCALE
 from .engines.response_cache import ResponseCache
 from .formats.operations import discover_resources, sync_with_adapter, validate_with_adapter
 from .formats.registry_init import get_registry as get_global_registry
+from .model_catalog import validate_model_compatibility
 from .quality.placeholders import ArbPlaceholderProtector
 
 try:
@@ -132,22 +133,6 @@ _DEFAULT_MOTOR_PRIORITY = (
     "facebook/nllb-200-distilled-600M",
     "facebook/m2m100_418M",
 )
-
-_DEFAULT_MOTOR_LANGUAGE_SETS = {
-    "Helsinki-NLP/opus-mt-en-es": {"en", "es"},
-    "Helsinki-NLP/opus-mt-en-fr": {"en", "fr"},
-    "Helsinki-NLP/opus-mt-tc-big-en-pt": {"en", "pt"},
-    "facebook/nllb-200-distilled-600M": {"pt", "ja", "en", "es", "fr", "de", "ko", "it", "ru"},
-    "facebook/m2m100_418M": {"pt", "ja", "en", "es", "fr", "de", "ko", "it", "ru"},
-}
-
-_DEFAULT_MOTOR_DIRECTIONS = {
-    "Helsinki-NLP/opus-mt-en-es": ("en", "es"),
-    "Helsinki-NLP/opus-mt-en-fr": ("en", "fr"),
-    "Helsinki-NLP/opus-mt-tc-big-en-pt": ("en", "pt"),
-    "facebook/nllb-200-distilled-600M": ("pt", "ja"),
-    "facebook/m2m100_418M": ("pt", "ja"),
-}
 
 PHASE_D_BENCHMARKS: dict[str, dict[str, float]] = {
     "M2M-100-418M": {"disk_mb": 840.0, "ram_gb": 1.2},
@@ -1141,15 +1126,9 @@ def _select_default_motor(source_lang: str, target_lang: str) -> str:
             candidate_names.add(f"models--{org}--{repo}")
         return any((cache_root / "hub" / name).exists() for name in candidate_names)
 
-    def _can_use(model_name: str, direction: tuple[str, str]) -> bool:
-        expected_source, expected_target = direction
-        if source_code != expected_source or target_code != expected_target:
-            return False
-        return not (offline_mode and not _model_in_cache(model_name))
-
     for model in _DEFAULT_MOTOR_PRIORITY:
-        direction = _DEFAULT_MOTOR_DIRECTIONS.get(model, ("", ""))
-        if direction and _can_use(model, direction):
+        compatibility = validate_model_compatibility(model, source_code, target_code)
+        if compatibility.compatible and (not offline_mode or _model_in_cache(model)):
             logger.info("Selected default motor: %s", model)
             return model
 

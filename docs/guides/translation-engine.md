@@ -23,26 +23,26 @@ Essa stack inclui:
 
 O restante do pacote pode funcionar sem essa pilha, mas o caminho de tradução local depende dela.
 
-## 2. Motores disponíveis
+## 2. Motores e modelos disponíveis
 
-A CLI aceita `--engine` com valores `marian` e `pytorch`.
+A CLI aceita `--engine marian` e `--engine pytorch`.
 
 ### `marian`
 
-É o path tradicional do projeto para modelos do tipo Marian/Opus-MT. O código atual usa modelos como:
+O adaptador suporta estes checkpoints e direções conforme o catálogo:
 
-- `Helsinki-NLP/opus-mt-en-es`
-- `Helsinki-NLP/opus-mt-en-fr`
-- `Helsinki-NLP/opus-mt-tc-big-en-pt`
+- `Helsinki-NLP/opus-mt-en-es`: en↔es;
+- `Helsinki-NLP/opus-mt-en-fr`: en↔fr;
+- `Helsinki-NLP/opus-mt-tc-big-en-pt`: en↔pt;
+- `facebook/m2m100_418M`: 22 direções de idiomas, configurando o idioma-fonte no tokenizer e forçando o token do idioma-alvo.
 
 ### `pytorch`
 
-Também existe um caminho com PyTorch, por exemplo usando modelos como:
+O caminho PyTorch suporta `facebook/nllb-200-distilled-600M`, `facebook/mbart-large-50-many-to-many-mmt`, T5 compatível e `facebook/m2m100_418M`. Para M2M100, a origem é configurada no tokenizer e o idioma de destino é definido com `forced_bos_token_id`.
 
-- `facebook/nllb-200-distilled-600M`
-- `facebook/m2m100_418M`
+### Direções declaradas para M2M100
 
-O catálogo compartilhado do projeto define compatibilidade por par de idiomas e favorece alguns modelos por prioridade.
+O catálogo do Poliglota limita o modelo a en↔es, en↔fr, en↔pt, pt↔es, pt↔fr, pt↔de, pt↔ja, pt↔ko, pt↔it, pt↔ru e pt↔pl. Essas 22 direções foram exercitadas com o adaptador Marian em inferência local; cinco direções representativas também passaram em CPU. Uma amostra real passou pelo caminho PyTorch. Isso valida a configuração técnica dessas chamadas, não certifica a qualidade linguística de todos os pares.
 
 ## 3. Seleção automática de modelo
 
@@ -54,27 +54,11 @@ O catálogo atual define a prioridade em runtime:
 4. `facebook/nllb-200-distilled-600M`
 5. `facebook/m2m100_418M`
 
-Quando `--model` é omitido, o runtime tenta usar esse catálogo para encontrar um modelo compatível com o par `source -> target`. Se o par não for suportado, a execução falha com mensagem clara.
+Quando `--model` é omitido, o runtime percorre o catálogo compartilhado em ordem de prioridade e escolhe o primeiro modelo compatível. Em modo offline, considera apenas referências presentes no cache. `supports()`, validação do adaptador e catálogo retornam as direções do modelo selecionado; pares ausentes falham com mensagem clara.
 
 ## 4. Dispositivos suportados
 
-A CLI aceita:
-
-- `auto`
-- `cpu`
-- `cuda`
-- `mps`
-- `gpu`
-
-### Regras reais
-
-- `auto`: tenta CUDA > MPS > CPU
-- `cpu`: usa CPU exclusivamente
-- `cuda`: exige CUDA disponível
-- `mps`: exige MPS disponível
-- `gpu`: funciona como alias permissivo de auto em nível de helper, mas a CLI continua validando explicitamente o pedido do usuário
-
-Em outras palavras, `auto` é permissivo; pedidos explícitos são estritos.
+As opções principais da GUI e CLI são `Automático (recomendado)`, `cpu` e `gpu`. A GUI exibe nomes amigáveis de hardware. A CLI mantém também `cuda[:index]` e `mps` como opções técnicas compatíveis. `auto` prefere CUDA, depois MPS e usa CPU como fallback; `gpu` exige um backend de GPU compatível e falha se não estiver disponível; `cpu` força CPU.
 
 ## 5. Offline e cache local
 

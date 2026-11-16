@@ -69,7 +69,7 @@ poliglota translate --source pt_BR --target en_US "Olá, mundo!"
 | `--target` | locale de destino |
 | `--engine` | `marian` ou `pytorch` |
 | `--model` | modelo do Hugging Face; opcional |
-| `--device` | `auto`, `cpu`, `cuda`, `mps` ou `gpu` |
+| `--device` | `auto`, `cpu` ou `gpu`; `cuda[:índice]` e `mps` continuam disponíveis como opções avançadas |
 | `--batch-size` | tamanho do lote de inferência |
 | `--json-output` | saída em JSON |
 | `--preserve-placeholders` | preserva placeholders antes/depois da tradução |

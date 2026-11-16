@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from poliglota import cli as cli_module
+from poliglota.core.locale import Locale
 from poliglota.engines import marian as marian_module
 from poliglota.engines.protocol import (
     MariansNMTTranslationEngine,
@@ -356,6 +357,56 @@ class TestMariansNMTAdapter:
         model.generate.assert_called_once()
         assert model.generate.call_args.kwargs["forced_bos_token_id"] == 128022
 
+    def test_m2m100_pair_and_language_support_matches_shared_catalog(self) -> None:
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("facebook/m2m100_418M")
+
+        expected_pairs = {
+            ("en", "es"),
+            ("es", "en"),
+            ("en", "fr"),
+            ("fr", "en"),
+            ("en", "pt"),
+            ("pt", "en"),
+            ("pt", "es"),
+            ("es", "pt"),
+            ("pt", "fr"),
+            ("fr", "pt"),
+            ("pt", "de"),
+            ("de", "pt"),
+            ("pt", "ja"),
+            ("ja", "pt"),
+            ("pt", "ko"),
+            ("ko", "pt"),
+            ("pt", "it"),
+            ("it", "pt"),
+            ("pt", "ru"),
+            ("ru", "pt"),
+            ("pt", "pl"),
+            ("pl", "pt"),
+        }
+
+        assert set(adapter.get_supported_pairs()) == expected_pairs
+        for source, target in expected_pairs:
+            assert adapter.supports(source, target)
+            adapter._validate_pair(source, target)
+        assert adapter.engine_language("ja_JP") == "ja"
+        assert adapter.engine_language("de-DE") == "de"
+        assert adapter.engine_language("pl") == "pl"
+        assert adapter.engine_language(Locale("ko_KR")) == "ko"
+        with pytest.raises(ValueError, match="Unsupported locale"):
+            adapter.engine_language("xx")
+
+    def test_adapter_pairs_are_specific_to_the_selected_model(self) -> None:
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
+
+        assert adapter.get_supported_pairs() == [("en", "es"), ("es", "en")]
+        assert adapter.supports("en_US", "es_ES")
+        assert not adapter.supports("pt", "de")
+        with pytest.raises(ValueError, match="Unsupported locale"):
+            adapter.engine_language("fr")
+
     def test_adapter_supports_known_language_pairs(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
@@ -363,14 +414,14 @@ class TestMariansNMTAdapter:
         assert adapter.supports("en", "es") is True
         assert adapter.supports("es", "en") is True
         assert adapter.supports("en", "de") is False
-        assert ("en", "pt") in adapter.get_supported_pairs()
+        assert set(adapter.get_supported_pairs()) == {("en", "es"), ("es", "en")}
 
     def test_adapter_engine_language_accepts_known_locale(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
 
-        assert adapter.engine_language("pt") == "pt"
-        assert adapter.engine_language("fr") == "fr"
+        assert adapter.engine_language("en_US") == "en"
+        assert adapter.engine_language("es-ES") == "es"
 
     def test_adapter_engine_language_rejects_unknown_locale(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):

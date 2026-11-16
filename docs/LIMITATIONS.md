@@ -26,21 +26,26 @@ O projeto não faz download automático do modelo nem promete funciona a partir 
 
 ## 3. Modelos e catálogo
 
-O catálogo do projeto define compatibilidade por par de idiomas e prioridade de modelos. A resolução automática depende do par e do modelo que estiver disponível em cache. Pares fora do catálogo exigem definição explícita do usuário.
+O catálogo declara direções por modelo e é usado pelos adaptadores e pela seleção padrão da CLI/GUI. Para `facebook/m2m100_418M`, o Poliglota expõe 22 direções: en↔es, en↔fr, en↔pt, pt↔es, pt↔fr, pt↔de, pt↔ja, pt↔ko, pt↔it, pt↔ru e pt↔pl. O checkpoint cobre mais idiomas, mas o Poliglota não declara esse suporte adicional.
+
+As 22 direções M2M foram exercitadas com inferência local CUDA pelo adaptador Marian; cinco também foram executadas em CPU. O caminho PyTorch foi exercitado em amostras reais en→es e pt→es, em CPU e CUDA. Isso verifica configuração e execução do tokenizer/modelo, não qualidade profissional em cada par. Compatibilidade no catálogo não é garantia semântica. As traduções dos corpora QuestLog e PazCall continuam exigindo revisão, conforme os relatórios locais.
+
+A resolução automática considera o par e a prioridade dos modelos. No modo offline, só escolhe candidatos presentes no cache. Pares não catalogados falham com mensagem explícita.
 
 ## 4. Dispositivo e GPU
 
-### `auto`
+### Opções da interface
 
-Tenta CUDA → MPS → CPU.
+A GUI mostra `Automático (recomendado)`, `CPU (nome do processador)` e `GPU (nome da placa)` quando há uma GPU compatível. Identificadores CUDA/MPS ficam internos. Se uma GPU física não puder ser usada pelo runtime, a interface a identifica como indisponível.
 
-### `cpu`
+### CLI e resolução
 
-Usa CPU exclusivamente.
+- `auto` (padrão) tenta CUDA, depois MPS e usa CPU se nenhum desses backends estiver disponível;
+- `cpu` força CPU;
+- `gpu` exige uma GPU suportada e prefere CUDA a MPS;
+- `cuda`, `cuda:N` e `mps` continuam disponíveis como seleções técnicas explícitas.
 
-### `cuda` / `mps`
-
-Requer disponibilidade do backend solicitado. Se ele não estiver presente, a execução falha com erro explícito.
+Pedidos explícitos de GPU falham com erro se o backend não estiver disponível. Não fazem fallback silencioso para CPU. Use `python -m poliglota devices` para ver os nomes detectados.
 
 ## 5. Offline
 
@@ -55,7 +60,7 @@ A execução em modo offline exige que a cache local contenha o modelo. Quando n
 
 ## 7. Status do projeto
 
-Poliglota está em desenvolvimento inicial (`0.0.2`), com funcionalidade real e limites explícitos. Isso significa que o projeto pode evoluir antes da 1.0, principalmente em áreas de API, qualidade e suporte de modelos.
+Poliglota está na versão `0.0.3`, com CLI, GUI e tradução local condicionada aos extras e modelos preparados pelo usuário. A qualidade varia por modelo, idioma, par e contexto; traduções produzidas automaticamente devem ser revisadas antes de uso público.
 
 ## 8. Referências
 

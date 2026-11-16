@@ -33,6 +33,7 @@ else:
 
 from poliglota.engines.protocol import MariansNMTTranslationEngine
 from poliglota.gpu import detect_device, validate_vram
+from poliglota.model_catalog import supported_pairs_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,7 @@ class _TokenizerProtocol(Protocol):
 
     def __call__(self, texts: list[str] | str, **kwargs: object) -> object: ...
     def batch_decode(self, tensors: object, skip_special_tokens: bool = True) -> list[str]: ...
+    def get_lang_id(self, language: str) -> int: ...
 
 
 class PyTorchTranslationEngine(MariansNMTTranslationEngine):
@@ -289,7 +291,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         if isinstance(locale, str):
             return self._normalize_lang_code(locale)
 
-        language_value = getattr(locale, "language", None)
+        language_value = getattr(locale, "code", None) or getattr(locale, "language", None)
         if isinstance(language_value, str):
             return self._normalize_lang_code(language_value)
 
@@ -304,23 +306,23 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         """Check if the current model is NLLB."""
         return "nllb" in self.model_name.lower()
 
+    def _is_m2m_model(self) -> bool:
+        """Check if the current model is M2M100."""
+        return "m2m100" in self.model_name.lower()
+
     def supports(self, source: object, target: object) -> bool:
         """Return whether the given language pair is supported."""
         if source is None or target is None:
             return False
         source_code = self._normalize_lang_code(str(source))
         target_code = self._normalize_lang_code(str(target))
-        return (
-            bool(source_code and target_code)
-            and (
-                source_code,
-                target_code,
-            )
-            in _SUPPORTED_PAIRS
-        )
+        supported_pairs = self.get_supported_pairs()
+        return bool(source_code and target_code) and (source_code, target_code) in supported_pairs
 
     def get_supported_pairs(self) -> list[tuple[str, str]]:
         """Expose the language pairs supported by this engine."""
+        if self._is_m2m_model():
+            return supported_pairs_for_model(self.model_name)
         return list(_SUPPORTED_PAIRS)
 
     def load_model(self, model_path: str | None = None, device: str = "cpu") -> None:
@@ -421,7 +423,7 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             value = str(text).strip()
             if not value:
                 continue
-            if self._is_mbart_model() or self._is_nllb_model():
+            if self._is_m2m_model() or self._is_mbart_model() or self._is_nllb_model():
                 prepared.append(value)
             else:
                 prepared.append(
@@ -442,7 +444,21 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         if not prepared:
             return []
 
-        if self._is_mbart_model():
+        if self._is_m2m_model():
+            source_lang_code = self._normalize_lang_code(source_lang)
+            tokenizer.src_lang = source_lang_code
+            tokenizer_kwargs = {
+                "return_tensors": "pt",
+                "padding": True,
+                "truncation": True,
+                "max_length": 512,
+            }
+            logger.debug(
+                "M2M100 tokenizer config: src_lang=%s (resolved from %s)",
+                source_lang_code,
+                source_lang,
+            )
+        elif self._is_mbart_model():
             source_lang_code = self._resolve_target_lang_code(source_lang, tokenizer)
             self._resolve_target_lang_code(target_lang, tokenizer)
             # mBART requires src_lang to be set as a tokenizer attribute, not as a kwarg
@@ -498,7 +514,15 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
             "early_stopping": False,
         }
 
-        if self._is_mbart_model():
+        if self._is_m2m_model():
+            target_code = self._normalize_lang_code(target_lang)
+            generation_kwargs["forced_bos_token_id"] = tokenizer.get_lang_id(target_code)
+            logger.debug(
+                "M2M100 generation: forced_bos_token_id=%s for target lang %s",
+                generation_kwargs["forced_bos_token_id"],
+                target_code,
+            )
+        elif self._is_mbart_model():
             lang_code = self._resolve_target_lang_code(target_lang, tokenizer)
             lang_to_id = getattr(tokenizer, "lang_code_to_id", None)
             if lang_to_id is not None and lang_code in lang_to_id:
@@ -664,6 +688,10 @@ class PyTorchTranslationEngine(MariansNMTTranslationEngine):
         """Translate multiple strings with adaptive batching and OOM recovery."""
         if not texts:
             return []
+
+        if self._is_m2m_model() and not self.supports(source_lang, target_lang):
+            message = f"Unsupported M2M100 translation pair '{source_lang}->{target_lang}'."
+            raise ValueError(message)
 
         filtered = [str(item).strip() for item in texts if str(item).strip()]
         if not filtered:
