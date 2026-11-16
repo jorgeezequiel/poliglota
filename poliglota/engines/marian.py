@@ -74,8 +74,11 @@ class _ModelProtocol(Protocol):
 
 
 class _TokenizerProtocol(Protocol):
+    src_lang: str
+
     def __call__(self, texts: list[str], **kwargs: object) -> object: ...
     def batch_decode(self, tensors: object, skip_special_tokens: bool = True) -> list[str]: ...
+    def get_lang_id(self, language: str) -> int: ...
 
 
 class MariansNMTAdapter(MariansNMTTranslationEngine):
@@ -162,7 +165,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
     def load_model(
         self,
         model_path: str | None = None,
-        device: str = "cpu",
+        device: str | None = None,
     ) -> None:
         """Load a model from a local directory or configured Hugging Face model."""
         if AutoModelForSeq2SeqLM is None or AutoTokenizer is None or torch is None:
@@ -172,7 +175,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             )
             raise RuntimeError(msg)
 
-        if device:
+        if device is not None:
             self.device = self._normalize_device(device)
         if self.device.startswith("cuda"):
             device_index = int(self.device.partition(":")[2]) if ":" in self.device else 0
@@ -262,7 +265,13 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             restored = restored[:insertion_index] + tag + restored[insertion_index:]
         return restored
 
-    def _translate_with_model(self, texts: list[str]) -> list[str]:
+    def _translate_with_model(
+        self,
+        texts: list[str],
+        *,
+        source_lang: str | None = None,
+        target_lang: str | None = None,
+    ) -> list[str]:
         """Perform model.generate() for a list of prepared inputs."""
         if self._model is None or self._tokenizer is None:
             msg = "Model is not loaded. Call load_model() before translating."
@@ -273,6 +282,18 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         prepared_texts = [text.strip() for text in texts if text]
         if not prepared_texts:
             return []
+
+        generation_options: dict[str, Any] = {}
+        if self.model_name == "facebook/m2m100_418M":
+            if source_lang is None or target_lang is None:
+                msg = "M2M100 translation requires source and target language codes."
+                raise ValueError(msg)
+            tokenizer.src_lang = (
+                source_lang.lower().split("-", maxsplit=1)[0].split("_", maxsplit=1)[0]
+            )
+            generation_options["forced_bos_token_id"] = tokenizer.get_lang_id(
+                target_lang.lower().split("-", maxsplit=1)[0].split("_", maxsplit=1)[0]
+            )
 
         tokenized = cast(
             "dict[str, Any]",
@@ -285,7 +306,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             ),
         )
 
-        if self.device in {"cuda", "mps"}:
+        if self.device.startswith("cuda") or self.device == "mps":
             tokenized = {key: value.to(self.device) for key, value in tokenized.items()}
 
         generated = model.generate(
@@ -293,6 +314,7 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
             num_beams=4,
             max_new_tokens=512,
             do_sample=False,
+            **generation_options,
         )
         decoded = tokenizer.batch_decode(generated, skip_special_tokens=True)
         return [str(value).strip() for value in decoded]
@@ -302,7 +324,9 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
         self._validate_pair(source_lang, target_lang)
         stripped_text, positions = self._strip_known_placeholders(text)
         start = time.perf_counter()
-        translated = self._translate_with_model([stripped_text])[0]
+        translated = self._translate_with_model(
+            [stripped_text], source_lang=source_lang, target_lang=target_lang
+        )[0]
         restored = self._restore_placeholders_at_positions(translated, positions)
         elapsed_ms = (time.perf_counter() - start) * 1000
         self._last_inference_time_ms = elapsed_ms
@@ -347,7 +371,11 @@ class MariansNMTAdapter(MariansNMTTranslationEngine):
                     stripped_chunk.append(cleaned)
 
                 try:
-                    results = self._translate_with_model(stripped_chunk)
+                    results = self._translate_with_model(
+                        stripped_chunk,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                    )
                     break
                 except Exception as exc:  # pragma: no cover - runtime engine failure.
                     is_oom = "out of memory" in str(exc).lower()

@@ -94,6 +94,7 @@ class TestMariansNMTAdapter:
         return SimpleNamespace(
             cuda=SimpleNamespace(
                 is_available=lambda: True,
+                device_count=lambda: 2,
                 OutOfMemoryError=RuntimeError,
                 empty_cache=lambda: None,
             ),
@@ -197,6 +198,164 @@ class TestMariansNMTAdapter:
 
         assert adapter.device == "cuda"
 
+    @pytest.mark.parametrize("device", ["cpu", "cuda", "cuda:0", "cuda:1", "mps"])
+    def test_adapter_moves_inputs_to_the_selected_device(self, device: str) -> None:
+        tensor = Mock()
+        tensor.to.side_effect = lambda destination: f"tensor on {destination}"
+        tokenizer = Mock(return_value={"input_ids": tensor})
+        tokenizer.batch_decode.return_value = ["translated"]
+        model = Mock()
+        model.generate.return_value = [1]
+
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es", device=device)
+            adapter._model = model
+            adapter._tokenizer = tokenizer
+
+            assert adapter._translate_with_model(["hello"]) == ["translated"]
+
+        if device == "cpu":
+            tensor.to.assert_not_called()
+            model.generate.assert_called_once_with(
+                input_ids=tensor, num_beams=4, max_new_tokens=512, do_sample=False
+            )
+        else:
+            tensor.to.assert_called_once_with(device)
+            model.generate.assert_called_once_with(
+                input_ids=f"tensor on {device}", num_beams=4, max_new_tokens=512, do_sample=False
+            )
+
+    @pytest.mark.parametrize(
+        ("device", "available", "count", "message"),
+        [
+            ("cuda", False, 1, "selected GPU is unavailable"),
+            ("cuda:0", True, 0, "selected GPU index 0 is not available"),
+            ("cuda:1", True, 1, "selected GPU index 1 is not available"),
+        ],
+    )
+    def test_adapter_rejects_unavailable_explicit_cuda_device(
+        self, device: str, available: bool, count: int, message: str
+    ) -> None:
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(
+                is_available=lambda: available,
+                device_count=lambda: count,
+            )
+        )
+        model_loader = Mock()
+        tokenizer_loader = Mock()
+        with (
+            patch.object(marian_module, "_IMPORT_ERROR", None),
+            patch.object(marian_module, "torch", fake_torch),
+            patch.object(marian_module, "AutoTokenizer", Mock(from_pretrained=tokenizer_loader)),
+            patch.object(
+                marian_module,
+                "AutoModelForSeq2SeqLM",
+                Mock(from_pretrained=model_loader),
+            ),
+        ):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es", device=device)
+            with pytest.raises(RuntimeError, match=message):
+                adapter.load_model()
+
+        tokenizer_loader.assert_not_called()
+        model_loader.assert_not_called()
+
+    def test_adapter_load_model_preserves_constructor_device(self) -> None:
+        tokenizer = Mock()
+        model = Mock()
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: True, device_count=lambda: 1)
+        )
+        with (
+            patch.object(marian_module, "_IMPORT_ERROR", None),
+            patch.object(marian_module, "torch", fake_torch),
+            patch.object(
+                marian_module, "AutoTokenizer", Mock(from_pretrained=Mock(return_value=tokenizer))
+            ),
+            patch.object(
+                marian_module,
+                "AutoModelForSeq2SeqLM",
+                Mock(from_pretrained=Mock(return_value=model)),
+            ),
+        ):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es", device="cuda:0")
+            adapter.load_model()
+
+        model.to.assert_called_once_with("cuda:0")
+        assert adapter.device == "cuda:0"
+
+    def test_adapter_does_not_fallback_to_cpu_after_explicit_gpu_failure(self) -> None:
+        tokenizer = Mock(return_value={"input_ids": Mock()})
+        model = Mock()
+        model.generate.side_effect = RuntimeError("CUDA kernel failed")
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es", device="cuda:0")
+            adapter._model = model
+            adapter._tokenizer = tokenizer
+
+            with pytest.raises(RuntimeError, match="Marian batch inference failed"):
+                adapter.translate_batch(["hello"], "en", "es")
+
+        model.to.assert_not_called()
+
+    def test_adapter_reports_gpu_oom_without_retrying_on_cpu(self) -> None:
+        tokenizer = Mock(return_value={"input_ids": Mock()})
+        model = Mock()
+        model.generate.side_effect = RuntimeError("CUDA out of memory")
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es", device="cuda:0")
+            adapter._model = model
+            adapter._tokenizer = tokenizer
+
+            with pytest.raises(RuntimeError, match="GPU memory ran out during translation"):
+                adapter.translate_batch(["hello"], "en", "es")
+
+        model.to.assert_not_called()
+
+    def test_m2m100_uses_source_and_forced_target_language_tokens(self) -> None:
+        tokenizer = Mock(return_value={"input_ids": [[1, 2]]})
+        tokenizer.get_lang_id.side_effect = {"es": 128022, "ja": 128040}.__getitem__
+        tokenizer.batch_decode.return_value = ["presupuesto excedido"]
+        model = Mock()
+        model.generate.return_value = [[3, 4]]
+
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("facebook/m2m100_418M")
+            adapter._model = model
+            adapter._tokenizer = tokenizer
+
+            translated = adapter.translate("Exceeded Budget", "en", "es")
+
+        assert translated == "presupuesto excedido"
+        assert tokenizer.src_lang == "en"
+        model.generate.assert_called_once_with(
+            input_ids=[[1, 2]],
+            num_beams=4,
+            max_new_tokens=512,
+            do_sample=False,
+            forced_bos_token_id=128022,
+        )
+
+    def test_m2m100_batch_configures_language_tokens(self) -> None:
+        tokenizer = Mock(return_value={"input_ids": [[1, 2], [3, 4]]})
+        tokenizer.get_lang_id.return_value = 128022
+        tokenizer.batch_decode.return_value = ["uno", "dos"]
+        model = Mock()
+        model.generate.return_value = [[5], [6]]
+
+        with patch.object(marian_module, "_IMPORT_ERROR", None):
+            adapter = marian_module.MariansNMTAdapter("facebook/m2m100_418M")
+            adapter._model = model
+            adapter._tokenizer = tokenizer
+
+            result = adapter.translate_batch(["uno", "dos"], "pt", "es")
+
+        assert result == ["uno", "dos"]
+        assert tokenizer.src_lang == "pt"
+        model.generate.assert_called_once()
+        assert model.generate.call_args.kwargs["forced_bos_token_id"] == 128022
+
     def test_adapter_supports_known_language_pairs(self) -> None:
         with patch.object(marian_module, "_IMPORT_ERROR", None):
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
@@ -288,7 +447,7 @@ class TestMariansNMTAdapter:
             adapter = marian_module.MariansNMTAdapter("Helsinki-NLP/opus-mt-en-es")
             adapter.batch_size = 8
 
-            def fake_translate(texts: list[str]) -> list[str]:
+            def fake_translate(texts: list[str], **_kwargs: object) -> list[str]:
                 # OOM when batch_size=4; succeed at batch_size=2
                 if len(texts) == 4:
                     msg = "CUDA out of memory"
