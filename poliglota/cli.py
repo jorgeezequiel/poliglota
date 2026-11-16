@@ -36,17 +36,31 @@ except ImportError:  # pragma: no cover - runtime fallback when rich is unavaila
     Text = None
 
 
+def _terminal_supports_unicode() -> bool:
+    """Avoid Rich panels on legacy terminals that cannot render UTF-8 reliably."""
+    encoding = (getattr(sys.stdout, "encoding", None) or "").lower()
+    if not encoding:
+        return True
+    if "utf" in encoding or "65001" in encoding:
+        return True
+    if encoding.startswith("cp") or encoding.startswith("windows-"):
+        return False
+    return True
+
+
 def _use_rich_console() -> bool:
     """Return True when rich output is available and not explicitly disabled."""
     if Console is None:
         return False
     if os.environ.get("NO_COLOR") is not None:
         return False
-    return os.environ.get("POLIGLOTA_FORCE_RICH", "1").strip().lower() not in {
+    if os.environ.get("POLIGLOTA_FORCE_RICH", "1").strip().lower() in {
         "0",
         "false",
         "no",
-    }
+    }:
+        return False
+    return _terminal_supports_unicode()
 
 
 def _render_cli_message(
@@ -1100,6 +1114,43 @@ def select_default_motor(source_lang: str, target_lang: str) -> str:
     return _select_default_motor(source_lang, target_lang)
 
 
+def _resolve_default_model_for_targets(source_lang: str, target_langs: list[str]) -> str | None:
+    """Choose one stable default model for a multi-target translation request.
+
+    When a single text is translated into several locales, all targets should reuse a
+    single model unless the caller explicitly set a different one. This keeps the
+    output consistent and avoids mixing pair-specific models with a multilingual model
+    for the same text.
+    """
+    normalized_targets = [
+        target for target in target_langs if target and _locale_to_engine_code(target)
+    ]
+    if not normalized_targets:
+        return None
+
+    candidates: list[str] = []
+    for target in normalized_targets:
+        try:
+            candidates.append(_select_default_motor(source_lang, target))
+        except ValueError:
+            continue
+
+    if not candidates:
+        return None
+
+    preferred_order = (
+        "facebook/nllb-200-distilled-600M",
+        "facebook/m2m100_418M",
+        "Helsinki-NLP/opus-mt-tc-big-en-pt",
+        "Helsinki-NLP/opus-mt-en-es",
+        "Helsinki-NLP/opus-mt-en-fr",
+    )
+    for model_name in preferred_order:
+        if model_name in set(candidates):
+            return model_name
+    return candidates[0]
+
+
 def translate_with_placeholders(
     text: str,
     source_locale: str,
@@ -1305,6 +1356,10 @@ def _run_translate(
             json_output=json_output,
         )
 
+    shared_model = None
+    if not model or not str(model).strip():
+        shared_model = _resolve_default_model_for_targets(source, targets)
+
     def _translate_target_payload(current_target: str) -> dict[str, Any] | None:
         buffer = StringIO()
         with redirect_stdout(buffer):
@@ -1316,7 +1371,7 @@ def _run_translate(
                 model=(
                     model
                     if model and str(model).strip()
-                    else _select_default_motor(source, current_target)
+                    else (shared_model or _select_default_motor(source, current_target))
                 ),
                 device=device,
                 preserve_placeholders=preserve_placeholders,
@@ -1355,7 +1410,7 @@ def _run_translate(
             print(f"{current_target}: {translated}")
         return 0
 
-    title = f"{source} → {', '.join(targets)}"
+    title = f"{source} -> {', '.join(targets)}"
     lines = [
         f"[bold #7dd3fc]{current_target}[/bold #7dd3fc]: [bold #d9f99d]{translated}[/bold #d9f99d]"
         for current_target, translated in translated_by_target

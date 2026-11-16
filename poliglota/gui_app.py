@@ -1114,10 +1114,17 @@ class PoliglotaGUI:
             msg = "Informe origem e destino antes de resolver o modelo padrão."
             raise ValueError(msg)
 
-        source_root = _locale_root(normalized)
-        target_root = _locale_root(target)
+        target_candidates = [
+            item.strip() for item in target.split(",") if item.strip()
+        ]
+        if len(target_candidates) > 1:
+            resolved = self._resolve_default_model_for_targets(normalized, target_candidates)
+            if resolved is not None:
+                return resolved
+
+        target_root = _locale_root(target_candidates[0] if target_candidates else target)
         try:
-            resolved = resolve_shared_default_model(source_root, target_root)
+            resolved = resolve_shared_default_model(_locale_root(normalized), target_root)
         except ValueError as exc:
             msg = (
                 f"Nenhum modelo compatível com {normalized} -> {target}. "
@@ -1125,7 +1132,7 @@ class PoliglotaGUI:
             )
             raise ValueError(msg) from exc
 
-        if source_root == "pt" and target_root == "ja":
+        if _locale_root(normalized) == "pt" and target_root == "ja":
             return "facebook/nllb-200-distilled-600M"
         return resolved
 
