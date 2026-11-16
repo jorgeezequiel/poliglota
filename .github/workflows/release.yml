@@ -138,7 +138,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-      metadata: read
 
     steps:
       - name: Download distribution artifacts
