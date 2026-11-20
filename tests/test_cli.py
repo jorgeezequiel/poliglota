@@ -80,17 +80,22 @@ def test_terminal_supports_unicode_for_known_and_unknown_encodings(
 
 
 @pytest.mark.unit
-def test_select_default_motor_supported_direction() -> None:
+def test_select_default_motor_supported_direction(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     assert cli_module._select_default_motor("en_US", "pt_BR") == "Helsinki-NLP/opus-mt-tc-big-en-pt"
 
 
 @pytest.mark.unit
-def test_select_default_motor_pt_to_ja_prefers_nllb() -> None:
+def test_select_default_motor_pt_to_ja_prefers_nllb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     assert cli_module._select_default_motor("pt_BR", "ja_JP") == "facebook/nllb-200-distilled-600M"
 
 
 @pytest.mark.unit
-def test_select_default_motor_uses_catalogued_reverse_direction() -> None:
+def test_select_default_motor_uses_catalogued_reverse_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
     assert cli_module._select_default_motor("pt_BR", "en_US") == (
         "Helsinki-NLP/opus-mt-tc-big-en-pt"
     )

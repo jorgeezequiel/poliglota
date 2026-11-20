@@ -25,6 +25,7 @@ poliglota-gui = "poliglota.gui:main"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-timeout>=2.3,<3",
     "ruff",
 ]
 gpu = [
@@ -50,6 +51,7 @@ packages = ["poliglota", "poliglota.core", "poliglota.formats", "poliglota.quali
 minversion = "8.0"
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-config", "--strict-markers"]
+timeout = 300
 filterwarnings = ["error"]
 markers = [
     "unit: unit tests for isolated behavior",

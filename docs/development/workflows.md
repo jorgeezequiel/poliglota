@@ -24,7 +24,8 @@ O projeto Poliglota utiliza cinco jobs no workflow:
 - **integration-gpu**: Executa `-m gpu` somente por `workflow_dispatch`, em runner self-hosted CUDA.
 - A qualidade coleta marcadores e falha se faltar o teste GPU ou houver sobreposição unit/GPU.
 - Cache pip separado por perfil unitário e CPU; pesos de modelo não são cacheados.
-- Timeouts apropriados: 10min (quality), 15min (unit), 30min (integration-cpu), 60min (integration-gpu).
+- Timeout diagnóstico de 300s por teste (`pytest-timeout`): um teste bloqueado encerra a execução com stacks de threads para localizar o ponto de espera.
+- Timeouts de job: 10min (quality), 15min (unit), 30min (integration-cpu), 60min (integration-gpu).
 
 ## Matriz de Testes
 
@@ -192,6 +193,11 @@ Cada job publica resultados JUnit XML em `reports/test-results/`:
 
 ### Sem downloads de modelos no CI
 - Pesos não são pre-carregados nem cacheados. `HF_HUB_OFFLINE=1` faz downloads acidentais falharem claramente.
+- Testes de seleção e comportamento da CLI isolam a disponibilidade do cache; nenhum caso de teste espera pesos locais.
+
+### Diagnóstico de testes bloqueados
+- Cada teste tem limite de 300s. O plugin `pytest-timeout` imprime stacks de threads e termina o processo, preservando o limite maior do job para configuração/instalação.
+- O método de timeout padrão do plugin é usado por plataforma; um resultado remoto macOS ainda é necessário para confirmar ou localizar qualquer bloqueio específico desse runner.
 
 ### GPU Runner manual
 - **integration-gpu** requer runner self-hosted com CUDA.

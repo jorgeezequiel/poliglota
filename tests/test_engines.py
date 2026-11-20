@@ -596,7 +596,10 @@ class TestTranslateCommand:
         adapter = Mock()
         adapter.translate.side_effect = lambda text, *_args: text.replace("Hello", "Olá")
 
-        with patch.object(cli_module, "_get_marian_adapter", return_value=adapter):
+        with (
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
+            patch.object(cli_module, "_get_marian_adapter", return_value=adapter),
+        ):
             translated, placeholder_stats, elapsed = cli_module._translate_with_placeholders(
                 "Hello {name}",
                 "en_US",
@@ -615,7 +618,10 @@ class TestTranslateCommand:
         adapter = Mock()
         adapter.translate.return_value = "Olá {name}!"
 
-        with patch.object(cli_module, "_get_marian_adapter", return_value=adapter):
+        with (
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
+            patch.object(cli_module, "_get_marian_adapter", return_value=adapter),
+        ):
             translated, placeholder_stats, elapsed = cli_module._translate_with_placeholders(
                 "Hello {name}",
                 "en_US",
@@ -742,6 +748,12 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
+            patch.object(
+                cli_module,
+                "_select_default_motor",
+                return_value="Helsinki-NLP/opus-mt-en-pt",
+            ),
             patch.object(
                 cli_module,
                 "_translate_with_placeholders",
@@ -776,6 +788,12 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
+            patch.object(
+                cli_module,
+                "_select_default_motor",
+                return_value="Helsinki-NLP/opus-mt-en-pt",
+            ),
             patch.object(
                 cli_module,
                 "_translate_with_placeholders",
@@ -835,6 +853,7 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
             patch.object(
                 cli_module,
                 "_select_default_motor",
@@ -865,6 +884,7 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
             patch.object(
                 cli_module,
                 "_select_default_motor",
@@ -896,6 +916,7 @@ class TestTranslateCommand:
         with (
             patch.object(cli_module, "importlib") as mock_importlib,
             patch.object(cli_module.gpu, "detect_device", return_value="cpu"),
+            patch.object(cli_module, "_verify_offline_capability", return_value=True),
             patch.object(
                 cli_module,
                 "_select_default_motor",
