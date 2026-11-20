@@ -216,6 +216,33 @@ def test_gui_project_source_is_revalidated_from_project_files(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_gui_validation_resolves_regional_android_source_locale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from poliglota.formats.xml import XMLFormatAdapter
+
+    project = tmp_path / "res"
+    source_dir = project / "values-pt-rBR"
+    source_dir.mkdir(parents=True)
+    (source_dir / "strings.xml").write_text(
+        '<resources><string name="hello">Olá</string></resources>', encoding="utf-8"
+    )
+    app = build_gui_app(project_root=project, headless=True)
+    app.project_var = DummyVar(str(project))
+    app.source_var = DummyVar("pt")
+    app.target_var = DummyVar("es_ES")
+    app.format_var = DummyVar("xml")
+    monkeypatch.setattr(app, "_validate_form", lambda _command: True)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(app, "_dispatch_command", lambda command, **_: calls.append(command))
+
+    app._handle_validate()
+
+    assert calls[0][calls[0].index("--source") + 1] == "pt_BR"
+    assert XMLFormatAdapter().discover(project)[0].locale.code == "pt_BR"
+
+
+@pytest.mark.unit
 def test_gui_operation_state_prevents_overlap() -> None:
     app = build_gui_app(project_root=Path("C:/temp"), headless=True)
     widget = DummyWidget()

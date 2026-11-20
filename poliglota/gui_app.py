@@ -34,6 +34,7 @@ from .formats.operations import discover_resources
 from .formats.registry_init import get_registry as get_global_registry
 from .gui_config import (
     DEFAULT_THEME,
+    LOCALE_CHOICES,
     RECENT_PROJECTS_LIMIT,
     THEME_CHOICES,
     GuiState,
@@ -65,6 +66,7 @@ from .gui_view import (
 from .hardware import DeviceOption, discover_devices
 from .language_detection import detect_source_locale, normalize_locale_code
 from .model_catalog import resolve_default_model_for_pair as resolve_shared_default_model
+from .review_window import open_review_window
 from .translation_plan import build_translation_plan
 
 logger = logging.getLogger(__name__)
@@ -1207,8 +1209,8 @@ class PoliglotaGUI:
 
     def _build_sync_command(self) -> list[str]:
         root_value = self._build_project_root()
-        source_value = self.source_var.get().strip() if self.source_var is not None else ""
         format_value = self.format_var.get() if self.format_var is not None else "arb"
+        source_value = self._resolve_project_source_locale(root_value, format_value)
         dry_run = self.sync_dry_run_var.get() if self.sync_dry_run_var is not None else True
 
         command = [
@@ -1268,7 +1270,7 @@ class PoliglotaGUI:
             return
         root_value = self.project_root if self.project_var is None else self._build_project_root()
         format_value = self.format_var.get() if self.format_var is not None else "arb"
-        source_value = self.source_var.get().strip() if self.source_var is not None else ""
+        source_value = self._resolve_project_source_locale(root_value, format_value)
         command = [
             "validate",
             "--root",
@@ -1351,6 +1353,14 @@ class PoliglotaGUI:
 
         if not by_locale:
             return normalized_preferred or preferred
+
+        # Add project-specific regional locales to the read-only selector.
+        source_widget = self.view.field_widgets.get("source")
+        configure = getattr(source_widget, "configure", None)
+        if configure is not None:
+            discovered = sorted({normalize_locale_code(code) or code for code in by_locale})
+            with contextlib.suppress(tk.TclError, TypeError):
+                configure(values=tuple(dict.fromkeys((*LOCALE_CHOICES, *discovered))))
 
         target_value = self.target_var.get().strip() if self.target_var is not None else ""
         normalized_target = normalize_locale_code(target_value) or target_value
@@ -1492,6 +1502,22 @@ class PoliglotaGUI:
             success_message="Traducao do projeto concluida.",
         )
 
+    def _handle_review_translations(self) -> None:
+        """Open a local review editor for each selected target locale."""
+        root_value = self._build_project_root()
+        format_value = self.format_var.get() if self.format_var is not None else "arb"
+        source_value = self._resolve_project_source_locale(root_value, format_value)
+        targets = [
+            value.strip() for value in self._serialize_target_locales().split(",") if value.strip()
+        ]
+        if not targets:
+            self._show_result("Selecione ao menos um idioma de destino para revisar.")
+            return
+        if self.root is None:
+            return
+        for target in targets:
+            open_review_window(self.root, root_value, format_value, source_value, target)
+
     def _build_ui(self) -> None:
         if self.headless:
             return
@@ -1551,6 +1577,7 @@ class PoliglotaGUI:
             list_locales=self._handle_list_locales,
             translate=self._handle_translate,
             translate_project=self._handle_translate_project,
+            review_translations=self._handle_review_translations,
             choose_project=self._choose_project_dir,
             project_history_selected=self._apply_recent_project_selection,
             cancel=self._cancel_operation,

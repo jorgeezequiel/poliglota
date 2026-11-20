@@ -183,6 +183,8 @@ poliglota-gui
 
 A GUI é uma camada visual sobre a mesma lógica da CLI. Ela é útil para usuários que preferem um formulário visual em vez de escrever comandos no terminal. Ainda assim, a CLI segue sendo a referência de comportamento e validação.
 
+Depois de traduzir um projeto pela GUI, use **Revisar traduções** para editar mensagens por chave, salvar rascunhos e exportar o conjunto revisado em uma pasta separada. Os arquivos originais permanecem preservados. Traduções ainda pendentes são exportadas somente após confirmação e continuam sendo preliminares, sem aprovação linguística automática. Consulte [o guia da GUI](docs/guides/gui.md) para o fluxo completo.
+
 Detalhes do fluxo da interface estão em [docs/guides/gui.md](docs/guides/gui.md).
 
 ## Modelo local e execução offline

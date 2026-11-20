@@ -1,6 +1,6 @@
 # GUI desktop do Poliglota
 
-A interface gráfica do Poliglota é uma camada visual sobre a mesma lógica da CLI. Ela não reimplementa a regra de negócio; apenas oferece um formulário para validar, sincronizar, listar locales e traduzir texto/projetos usando os mesmos comandos já presentes no pacote.
+A interface gráfica do Poliglota oferece os fluxos de validação, sincronização e tradução, além de um editor local para revisar resultados gerados. As operações de projeto usam a mesma lógica de tradução da CLI.
 
 ## Quando usar a GUI
 
@@ -40,7 +40,16 @@ python -m poliglota.gui --headless
 3. informe a origem e o destino;
 4. configure motor e dispositivo;
 5. clique em `Validar`, `Sincronizar`, `Listar idiomas` ou `Traduzir`;
-6. acompanhe a saída da operação na área de resultados.
+6. acompanhe a saída da operação na área de resultados;
+7. depois de traduzir o projeto, clique em `Revisar traduções` para conferir cada chave, comparar original e resultado e editar qualquer mensagem.
+
+## Revisar e exportar
+
+O editor mostra o status de revisão, a chave, o arquivo de destino, o texto original, a tradução atual e a descrição ARB quando disponível. `Salvar rascunho` persiste a alteração sem marcá-la como aprovada; `Marcar revisada` registra a decisão do revisor. O editor valida placeholders conhecidos antes de salvar.
+
+As saídas automáticas ficam em `.poliglota_translated`. Rascunhos e estados de revisão ficam separados em `.poliglota_reviewed`, sem sobrescrever os arquivos de origem. Ao escolher um diretório pai para exportar, a GUI cria uma nova pasta `poliglota-reviewed-<locale>`; se ela já existir, usa um nome com data e hora para evitar sobrescrita. A exportação contém o conjunto inteiro de arquivos gerados, incluindo revisões persistidas.
+
+Se ainda houver mensagens pendentes, a GUI informa a quantidade e pede confirmação antes de exportar. Esses textos continuam sendo traduções preliminares; a confirmação de exportação não os aprova linguisticamente.
 
 ## Estado e persistência
 
@@ -50,7 +59,7 @@ A GUI salva valores do formulário entre sessões. Em geral, o estado persiste e
 - macOS: `~/Library/Application Support/poliglota/gui_state.json`
 - Linux: `$XDG_CONFIG_HOME/poliglota/gui_state.json` ou `~/.config/poliglota/gui_state.json`
 
-A persistência inclui pasta do projeto, formato, bairros de origem/destino, model, tema e geometria da janela. Arquivos corrompidos ou ausentes são tratados como padrão do programa.
+A persistência inclui pasta do projeto, formato, locales de origem/destino, modelo, dispositivo, tema e geometria da janela. Os rascunhos e estados de revisão são mantidos junto às saídas do projeto. Arquivos de configuração corrompidos ou ausentes são tratados como padrão do programa.
 
 ## Campos e validação
 
@@ -77,6 +86,8 @@ A GUI também oferece ações para:
 
 - a GUI é um wrapper sobre a CLI e não substitui a CLI como referência;
 - a tradução real continua exigindo modelo local compatível;
+- a revisão é manual e local; o Poliglota não certifica correção semântica nem substitui revisão linguística;
+- a exportação pode incluir preliminares, mas exige confirmação explícita enquanto houver itens pendentes;
 - a GUI não faz download automático de pacotes ou modelos;
 - falhas do modelo, do dispositivo ou do ambiente continuam sendo reportadas pela própria CLI.
 
@@ -88,6 +99,7 @@ Os principais módulos da GUI são:
 - `poliglota/gui_app.py` — lógica de validação e execução de comandos;
 - `poliglota/gui_view.py` — apresentação e widgets;
 - `poliglota/gui_config.py` — estado persistido da interface;
+- `poliglota/translation_review.py` e `poliglota/review_window.py` — persistência, validação e editor de revisão;
 - `poliglota/gui_validators.py` e `poliglota/gui_errors.py` — validação e classificação de erros.
 
 ## Ver também

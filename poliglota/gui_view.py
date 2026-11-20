@@ -399,6 +399,7 @@ class GuiActions:
     list_locales: Callable[[], None]
     translate: Callable[[], None]
     translate_project: Callable[[], None]
+    review_translations: Callable[[], None]
     choose_project: Callable[[], None]
     project_history_selected: Callable[[], None]
     cancel: Callable[[], None]
@@ -972,6 +973,12 @@ class GuiView:
                 actions.translate_project,
                 "TButton",
                 "Traduz todos os recursos do projeto.",
+            ),
+            (
+                "Revisar traduções",
+                actions.review_translations,
+                "TButton",
+                "Abre o editor local das traduções preliminares salvas.",
             ),
             (
                 "Restaurar padrões",
