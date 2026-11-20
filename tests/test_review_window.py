@@ -41,7 +41,6 @@ def review_ui(tmp_path: Path) -> Any:
         encoding="utf-8",
     )
     open_review_window(root, project, "arb", "en_US", "es_ES")
-    root.update()
     window = next(child for child in root.winfo_children() if isinstance(child, tk.Toplevel))
     tree = next(widget for widget in _walk(window) if isinstance(widget, ttk.Treeview))
     editor = next(
@@ -55,7 +54,6 @@ def review_ui(tmp_path: Path) -> Any:
     yield root, project, window, tree, editor, buttons
     with suppress(tk.TclError):
         window.destroy()
-        root.update()
 
 
 def _walk(widget: tk.Misc) -> Any:
@@ -69,22 +67,23 @@ def _edit(editor: tk.Text, text: str) -> None:
     editor.insert("1.0", text)
 
 
-def _select(tree: ttk.Treeview, iid: str, root: tk.Tk) -> None:
+def _select(tree: ttk.Treeview, iid: str) -> None:
     tree.selection_set(iid)
     tree.focus(iid)
-    tree.event_generate("<<TreeviewSelect>>")
-    root.update()
+    # Deliver the actual Tk virtual event synchronously. Pumping the global
+    # event loop with root.update() can block on macOS hosted runners.
+    tree.event_generate("<<TreeviewSelect>>", when="now")
 
 
 def test_navigation_can_save_draft_and_preserves_pending_state(
     review_ui: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, project, _window, tree, editor, _buttons = review_ui
+    _root, project, _window, tree, editor, _buttons = review_ui
     _edit(editor, "Edicao temporaria")
     import poliglota.review_window as ui
 
     monkeypatch.setattr(ui.messagebox, "askyesnocancel", lambda *args, **kwargs: True)
-    _select(tree, "1", root)
+    _select(tree, "1")
     manifest = json.loads(
         (project / ".poliglota_reviewed" / "review_manifest.json").read_text(encoding="utf-8")
     )
@@ -95,20 +94,40 @@ def test_navigation_can_save_draft_and_preserves_pending_state(
     assert editor.get("1.0", "end-1c") == "Segundo"
 
 
+def test_repeated_selection_event_does_not_resolve_the_same_edit_twice(
+    review_ui: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _root, _project, _window, tree, editor, _buttons = review_ui
+    import poliglota.review_window as ui
+
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        ui.messagebox,
+        "askyesnocancel",
+        lambda *args, **kwargs: prompts.append("dirty") or True,
+    )
+    _edit(editor, "Rascunho")
+    _select(tree, "1")
+    _select(tree, "1")
+
+    assert prompts == ["dirty"]
+    assert editor.get("1.0", "end-1c") == "Segundo"
+
+
 def test_navigation_discard_and_cancel_keep_expected_message(
     review_ui: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, project, _window, tree, editor, _buttons = review_ui
+    _root, project, _window, tree, editor, _buttons = review_ui
     import poliglota.review_window as ui
 
     _edit(editor, "Não salvar")
     monkeypatch.setattr(ui.messagebox, "askyesnocancel", lambda *args, **kwargs: False)
-    _select(tree, "1", root)
+    _select(tree, "1")
     assert editor.get("1.0", "end-1c") == "Segundo"
     assert not (project / ".poliglota_reviewed" / "review_manifest.json").exists()
     _edit(editor, "Manter aqui")
     monkeypatch.setattr(ui.messagebox, "askyesnocancel", lambda *args, **kwargs: None)
-    _select(tree, "0", root)
+    _select(tree, "0")
     assert tree.selection() == ("1",)
     assert editor.get("1.0", "end-1c") == "Manter aqui"
 
@@ -128,7 +147,7 @@ def test_failed_save_blocks_navigation_and_export(
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disco indisponível")),
     )
     monkeypatch.setattr(ui.messagebox, "showerror", lambda *args, **kwargs: None)
-    _select(tree, "1", _root)
+    _select(tree, "1")
     assert tree.selection() == ("0",)
     assert editor.get("1.0", "end-1c") == "Edição pendente"
     assert not (project / ".poliglota_reviewed" / "review_manifest.json").exists()
@@ -144,7 +163,7 @@ def test_cursor_only_is_not_dirty_and_export_dirty_must_be_resolved(
     editor.mark_set("insert", "1.2")
     prompts: list[str] = []
     ui.messagebox.askyesnocancel = lambda *args, **kwargs: prompts.append("dirty") or None
-    _select(tree, "1", _root)
+    _select(tree, "1")
     assert prompts == []
     _edit(editor, "Não exportar sem resolver")
     monkeypatch.setattr(
@@ -153,7 +172,6 @@ def test_cursor_only_is_not_dirty_and_export_dirty_must_be_resolved(
         lambda *args, **kwargs: pytest.fail("export proceeded with dirty editor"),
     )
     buttons["Exportar arquivos"].invoke()
-    _root.update()
     assert prompts == ["dirty"]
 
 
@@ -166,9 +184,7 @@ def test_close_button_and_window_manager_close_use_dirty_guard(
     _edit(editor, "Não perder")
     monkeypatch.setattr(ui.messagebox, "askyesnocancel", lambda *args, **kwargs: None)
     buttons["Fechar"].invoke()
-    root.update()
     assert window.winfo_exists()
     protocol = root.tk.call("wm", "protocol", window._w, "WM_DELETE_WINDOW")
     root.tk.call(protocol)
-    root.update()
     assert window.winfo_exists()
