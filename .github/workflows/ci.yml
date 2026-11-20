@@ -170,7 +170,7 @@ jobs:
         env:
           HF_HUB_OFFLINE: "1"
         run: >
-          python -m pytest ${{ runner.os == 'macOS' && '-vv -s --timeout=120 --timeout-method=thread --faulthandler-timeout=90 --tb=long' || '-q --timeout=300 --tb=short' }}
+          python -m pytest ${{ runner.os == 'macOS' && '-vv -s --timeout=120 --timeout-method=thread -o faulthandler_timeout=90 --tb=long' || '-q --timeout=300 --tb=short' }}
           -m "not gpu and not unit" --ignore=tests/test_version_consistency.py
           --junitxml=reports/test-results/junit-integration-cpu-${{ matrix.os }}-py${{ matrix.python-version }}.xml
           2>&1

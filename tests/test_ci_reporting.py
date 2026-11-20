@@ -51,7 +51,7 @@ def test_workflow_preserves_full_matrix_and_separates_test_selection() -> None:
     assert "runner.os == 'macOS'" in cpu_test["run"]
     assert "-vv -s --timeout=120" in cpu_test["run"]
     assert "--timeout-method=thread" in cpu_test["run"]
-    assert "--faulthandler-timeout=90" in cpu_test["run"]
+    assert "-o faulthandler_timeout=90" in cpu_test["run"]
     assert "-q --timeout=300" in cpu_test["run"]
 
 
