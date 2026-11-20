@@ -84,6 +84,8 @@ def open_review_window(
         )
 
     current: ReviewItem | None = None
+    current_iid: str | None = None
+    loading = False
 
     def set_text(widget: tk.Text, value: str, *, readonly: bool = False) -> None:
         widget.configure(state=tk.NORMAL)
@@ -116,13 +118,60 @@ def open_review_window(
             )
             tree.set(selected[0], "state", "Revisada" if state else "Pendente")
 
+    def is_dirty() -> bool:
+        return bool(current is not None and translation.get("1.0", "end-1c") != current.value)
+
+    def resolve_dirty() -> bool:
+        """Resolve the editor buffer before navigation, close, or export."""
+        if not is_dirty():
+            return True
+        choice = messagebox.askyesnocancel(
+            "Alterações não salvas",
+            "A tradução foi alterada.\n\n"
+            "Sim: salvar rascunho e continuar.\n"
+            "Não: descartar as alterações e continuar.\n"
+            "Cancelar: permanecer nesta mensagem.",
+            parent=window,
+        )
+        if choice is None:
+            return False
+        if choice:
+            before = current
+            save(reviewed=False)
+            return before is not None and current is not before and not is_dirty()
+        return True
+
     def select_item(_event: object = None) -> None:
-        nonlocal current
-        current = selected_item()
-        if current is None:
+        nonlocal current, current_iid, loading
+        if loading:
             return
+        selected = tree.selection()
+        target_iid = selected[0] if selected else None
+        if target_iid is None:
+            return
+        # Tk may deliver a second selection event after we restore the old row.
+        # Never reload the active row from disk in response to that duplicate.
+        if target_iid == current_iid:
+            return
+        if current is not None and target_iid != current_iid and not resolve_dirty():
+            loading = True
+            tree.selection_remove(tree.selection())
+            if current_iid is not None:
+                tree.selection_set(current_iid)
+                tree.focus(current_iid)
+            loading = False
+            return
+        current_iid = target_iid
+        current = item_by_id[target_iid]
         key_label.set(f"{current.key} — {current.file}")
-        context_label.set(f"Contexto: {current.context}" if current.context else "")
+        context = f"Contexto: {current.context}" if current.context else ""
+        if current.stale:
+            context += (
+                "\nRevisão anterior desatualizada: reavalie esta mensagem antes de aprová-la."
+            )
+        if current.previous_review is not None:
+            context += f"\nRevisão anterior: {current.previous_review}"
+        context_label.set(context)
         set_text(original, current.source, readonly=True)
         set_text(translation, current.value)
 
@@ -145,12 +194,15 @@ def open_review_window(
             for candidate in session.items
             if (candidate.file, candidate.key) == (item.file, item.key)
         )
+        set_text(translation, current.value)
         selected = tree.selection()
         if selected:
             tree.set(selected[0], "state", "Revisada" if current.reviewed else "Pendente")
         refresh()
 
     def export() -> None:
+        if not resolve_dirty():
+            return
         if session.pending_count and not messagebox.askyesno(
             "Traduções pendentes",
             f"{session.pending_count} mensagens ainda estão pendentes. "
@@ -186,7 +238,13 @@ def open_review_window(
         side=tk.LEFT, padx=6
     )
     ttk.Button(buttons, text="Exportar arquivos", command=export).pack(side=tk.LEFT, padx=6)
-    ttk.Button(buttons, text="Fechar", command=window.destroy).pack(side=tk.RIGHT)
+
+    def close() -> None:
+        if resolve_dirty():
+            window.destroy()
+
+    ttk.Button(buttons, text="Fechar", command=close).pack(side=tk.RIGHT)
+    window.protocol("WM_DELETE_WINDOW", close)
     tree.selection_set("0")
     tree.focus("0")
     select_item()

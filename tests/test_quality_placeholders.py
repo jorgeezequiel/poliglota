@@ -317,6 +317,23 @@ def test_arb_protector_does_not_treat_percent_prose_as_printf_placeholders() -> 
     assert protector.detect(source) == {"percent"}
 
 
+def test_arb_format_validation_preserves_icu_control_arguments() -> None:
+    protector = ArbPlaceholderProtector()
+    source = "{count, plural, =0{No files} one{One file} other{{count} files}}"
+
+    assert protector.validate_preservation_for_format("arb", source, source) == []
+    issues = protector.validate_preservation_for_format("arb", source, "{count} archivos")
+    assert any("ICU argument declarations changed" in issue for issue in issues)
+
+
+def test_xml_format_validation_checks_android_printf_and_escapes() -> None:
+    protector = ArbPlaceholderProtector()
+    source = r"%1$s saved %2$d files: %%\n"
+
+    assert protector.validate_preservation_for_format("xml", source, source) == []
+    assert protector.validate_preservation_for_format("xml", source, r"%s guardó archivos")
+
+
 def test_arb_protector_validate_restore_mismatch() -> None:
     """Protector detects restored text not matching original."""
     protector = ArbPlaceholderProtector()

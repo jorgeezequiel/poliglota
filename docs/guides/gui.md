@@ -47,7 +47,11 @@ python -m poliglota.gui --headless
 
 O editor mostra o status de revisão, a chave, o arquivo de destino, o texto original, a tradução atual e a descrição ARB quando disponível. `Salvar rascunho` persiste a alteração sem marcá-la como aprovada; `Marcar revisada` registra a decisão do revisor. O editor valida placeholders conhecidos antes de salvar.
 
-As saídas automáticas ficam em `.poliglota_translated`. Rascunhos e estados de revisão ficam separados em `.poliglota_reviewed`, sem sobrescrever os arquivos de origem. Ao escolher um diretório pai para exportar, a GUI cria uma nova pasta `poliglota-reviewed-<locale>`; se ela já existir, usa um nome com data e hora para evitar sobrescrita. A exportação contém o conjunto inteiro de arquivos gerados, incluindo revisões persistidas.
+Se o conteúdo do editor mudar, selecionar outra mensagem, fechar pelo botão ou pelo `X`, ou exportar abre uma confirmação. `Sim` salva um rascunho e continua, `Não` descarta somente a edição ainda não persistida e `Cancelar` mantém a mensagem aberta. Uma falha ao salvar mantém a edição no editor e bloqueia a navegação/fechamento/exportação. Exportar também exige resolver a edição visível antes da confirmação separada de itens ainda pendentes.
+
+As saídas automáticas ficam em `.poliglota_translated`. Rascunhos, aprovações e histórico de conteúdo ficam em `.poliglota_reviewed/review_manifest.json`, sem sobrescrever os arquivos de origem. O estado é separado por pasta do projeto, formato, par de locales, caminho relativo e chave. Ao reabrir `Revisar traduções`, o Poliglota retoma os rascunhos persistidos. Se o original ou a tradução preliminar mudar, a revisão anterior é preservada para consulta, mas fica obsoleta e não é aplicada nem exportada como aprovada até nova revisão. Mudanças apenas em descrições/metadados não tornam o texto obsoleto.
+
+Ao escolher um diretório pai para exportar, a GUI cria uma pasta nova `poliglota-reviewed-<locale>`; se ela já existir, usa um nome com data e hora, sem sobrescrevê-la. Todos os arquivos são preparados e validados em uma área temporária no mesmo volume. A publicação usa um marcador de exportação incompleta enquanto copia; em falha, o diretório criado por aquela tentativa é removido. Arquivos de destino preexistentes nunca são substituídos. A exportação inclui os arquivos do conjunto de origem e recusa arquivos de tradução ausentes, estruturas divergentes e revisões obsoletas.
 
 Se ainda houver mensagens pendentes, a GUI informa a quantidade e pede confirmação antes de exportar. Esses textos continuam sendo traduções preliminares; a confirmação de exportação não os aprova linguisticamente.
 
@@ -59,7 +63,7 @@ A GUI salva valores do formulário entre sessões. Em geral, o estado persiste e
 - macOS: `~/Library/Application Support/poliglota/gui_state.json`
 - Linux: `$XDG_CONFIG_HOME/poliglota/gui_state.json` ou `~/.config/poliglota/gui_state.json`
 
-A persistência inclui pasta do projeto, formato, locales de origem/destino, modelo, dispositivo, tema e geometria da janela. Os rascunhos e estados de revisão são mantidos junto às saídas do projeto. Arquivos de configuração corrompidos ou ausentes são tratados como padrão do programa.
+A persistência inclui pasta do projeto, formato, locales de origem/destino, modelo, dispositivo, tema e geometria da janela. Os rascunhos e estados de revisão são mantidos junto às saídas do projeto. Uma sessão de revisão corrompida ou de esquema incompatível apresenta erro e preserva o manifesto existente; não é tratada como uma sessão vazia. A configuração geral da GUI, separada do manifesto de revisão, ainda usa os padrões do programa quando ausente ou inválida.
 
 ## Campos e validação
 

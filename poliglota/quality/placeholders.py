@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections import Counter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,13 +20,14 @@ class ArbPlaceholderProtector:
 
     # ARB placeholder syntax: {identifier}
     _PLACEHOLDER_PATTERN = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
+    _ICU_ARGUMENT_PATTERN = r"\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*,\s*(plural|select|selectordinal)\b"
     # Android/printf formatting tokens such as %s, %d and %1$s.
     _PRINTF_PLACEHOLDER_PATTERN = (
         # A space is technically a printf flag, but accepting it here makes
         # ordinary prose such as "% of the budget" look like the token "% o".
         # Android's resource placeholders use compact specifiers, so whitespace
         # is intentionally excluded to avoid false positives in localized text.
-        r"%(?:\d+\$)?[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[diuoxXfFeEgGaAcspn]"
+        r"%%|%(?:\d+\$)?[-+#0]*(?:\d+|\*)?(?:\.(?:\d+|\*))?[diuoxXfFeEgGaAcspn]"
     )
 
     def __init__(self, token_prefix: str | None = None) -> None:
@@ -212,6 +214,34 @@ class ArbPlaceholderProtector:
             damaged_marker = re.compile(rf"(?i)_*PH_{re.escape(nonce)}")
             if damaged_marker.search(translated):
                 issues.append(f"Placeholder token remains in translated text: {token}")
+        return issues
+
+    def validate_preservation_for_format(
+        self, format_name: str, original: str, translated: str
+    ) -> list[str]:
+        """Validate placeholders using the selected format's interpolation rules.
+
+        Curly variables and printf/Android formatting tokens are compared with
+        multiplicity. Android XML additionally checks escaped percent sequences;
+        format-specific XML structure is validated by its adapter at export.
+        """
+        issues = self.validate_preservation(original, translated)
+        if format_name.lower() == "arb":
+            original_icu = Counter(re.findall(self._ICU_ARGUMENT_PATTERN, original))
+            translated_icu = Counter(re.findall(self._ICU_ARGUMENT_PATTERN, translated))
+            if original_icu != translated_icu:
+                issues.append(
+                    "ICU argument declarations changed from "
+                    f"{dict(original_icu)} to {dict(translated_icu)}"
+                )
+        if format_name.lower() == "xml":
+            # Android resources use backslash escapes such as \\n, \\t, \\@,
+            # \\? and escaped quotes. Compare counts without rejecting reordered prose.
+            escape_pattern = re.compile(r"\\(?:[nrt\\\"'@?])")
+            old = escape_pattern.findall(original)
+            new = escape_pattern.findall(translated)
+            if sorted(old) != sorted(new):
+                issues.append(f"Android escape sequences changed from {old} to {new}")
         return issues
 
 
