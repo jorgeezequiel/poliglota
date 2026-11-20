@@ -48,6 +48,11 @@ def test_workflow_preserves_full_matrix_and_separates_test_selection() -> None:
     assert "not gpu and not unit" in cpu_test["run"]
     assert "--ignore=tests/test_version_consistency.py" in cpu_test["run"]
     assert cpu_test["env"]["HF_HUB_OFFLINE"] == "1"
+    assert "runner.os == 'macOS'" in cpu_test["run"]
+    assert "-vv -s --timeout=120" in cpu_test["run"]
+    assert "--timeout-method=thread" in cpu_test["run"]
+    assert "--faulthandler-timeout=90" in cpu_test["run"]
+    assert "-q --timeout=300" in cpu_test["run"]
 
 
 @pytest.mark.unit

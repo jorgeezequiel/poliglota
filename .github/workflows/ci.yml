@@ -170,9 +170,10 @@ jobs:
         env:
           HF_HUB_OFFLINE: "1"
         run: >
-          python -m pytest -q -m "not gpu and not unit" --ignore=tests/test_version_consistency.py
+          python -m pytest ${{ runner.os == 'macOS' && '-vv -s --timeout=120 --timeout-method=thread --faulthandler-timeout=90 --tb=long' || '-q --timeout=300 --tb=short' }}
+          -m "not gpu and not unit" --ignore=tests/test_version_consistency.py
           --junitxml=reports/test-results/junit-integration-cpu-${{ matrix.os }}-py${{ matrix.python-version }}.xml
-          --tb=short 2>&1
+          2>&1
 
       - name: Publicar resultados JUnit
         if: always()
