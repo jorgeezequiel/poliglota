@@ -2,27 +2,28 @@
 
 ## Visão Geral
 
-O projeto Poliglota utiliza um workflow CI moderno desacoplado em quatro jobs independentes:
+O projeto Poliglota utiliza cinco jobs no workflow:
 
 1. **quality** — Lint, formatação de código e verificação de versão (Ubuntu, Python 3.13)
 2. **unit-tests** — Testes unitários isolados (Ubuntu/Windows/macOS × Python 3.11/3.12/3.13)
 3. **integration-cpu** — Testes de integração com motores PyTorch rodando em CPU (Ubuntu/Windows/macOS × Python 3.11/3.12/3.13)
-4. **integration-gpu** — Testes de integração com GPU/CUDA (self-hosted, main branch only)
-5. **summary** — Compilação de resultados e falha clara se houver rejeições
+4. **integration-gpu** — Smoke test CUDA real (self-hosted, somente `workflow_dispatch`)
+5. **summary** — Confere os jobs e exige JUnit válido por combinação obrigatória
 
 ## Justificativa de Desacoplamento
 
 ### Antes
 - Todos os testes em um único job `tests` (27 combinações: 3 OS × 3 Python).
 - Sem separação clara entre testes que exigem PyTorch e testes que não exigem.
-- Cache de modelos Hugging Face implícito; sem documentação.
+- Cache de modelos Hugging Face desnecessário: a suíte não baixa modelos.
 - GPU como "eventually consistent" (faltava runner self-hosted).
 
 ### Depois
-- **unit-tests**: Rodamapenas com `[dev]` (pytest/ruff), nenhuma dependência PyTorch.
-- **integration-cpu**: Com `[dev,gpu]` (PyTorch/Transformers), força CPU via `POLIGLOTA_TEST_CPU_ONLY=1`.
-- **integration-gpu**: Separado, self-hosted, condicional (main branch only).
-- Cache explícito de modelos Hugging Face com chaves por OS/Python.
+- **unit-tests**: Executam `-m unit` com apenas `[dev]`.
+- **integration-cpu**: Executa somente `not gpu and not unit`; inclui testes sem marcador e usa PyTorch CPU e Transformers reais.
+- **integration-gpu**: Executa `-m gpu` somente por `workflow_dispatch`, em runner self-hosted CUDA.
+- A qualidade coleta marcadores e falha se faltar o teste GPU ou houver sobreposição unit/GPU.
+- Cache pip separado por perfil unitário e CPU; pesos de modelo não são cacheados.
 - Timeouts apropriados: 10min (quality), 15min (unit), 30min (integration-cpu), 60min (integration-gpu).
 
 ## Matriz de Testes
@@ -46,54 +47,42 @@ O projeto Poliglota utiliza um workflow CI moderno desacoplado em quatro jobs in
 | macOS   | 3.13   | 15 min  | [dev]     | pip   |
 
 ### Integration CPU (9 jobs)
-| Sistema | Python | Timeout | Deps       | Cache HF                                    |
-|---------|--------|---------|------------|---------------------------------------------|
-| Ubuntu  | 3.11   | 30 min  | [dev,gpu]  | hf-models-cpu-Linux-py3.11                  |
-| Ubuntu  | 3.12   | 30 min  | [dev,gpu]  | hf-models-cpu-Linux-py3.12                  |
-| Ubuntu  | 3.13   | 30 min  | [dev,gpu]  | hf-models-cpu-Linux-py3.13                  |
-| Windows | 3.11   | 30 min  | [dev,gpu]  | hf-models-cpu-Windows-py3.11                |
-| Windows | 3.12   | 30 min  | [dev,gpu]  | hf-models-cpu-Windows-py3.12                |
-| Windows | 3.13   | 30 min  | [dev,gpu]  | hf-models-cpu-Windows-py3.13                |
-| macOS   | 3.11   | 30 min  | [dev,gpu]  | hf-models-cpu-Darwin-py3.11                 |
-| macOS   | 3.12   | 30 min  | [dev,gpu]  | hf-models-cpu-Darwin-py3.12                 |
-| macOS   | 3.13   | 30 min  | [dev,gpu]  | hf-models-cpu-Darwin-py3.13                 |
+
+Matriz: Ubuntu/Windows/macOS × Python 3.11/3.12/3.13; perfil `.github/requirements-ci-cpu.txt`. Windows/Linux instalam PyTorch pelo índice oficial CPU; macOS usa o wheel sem CUDA. O cache pip é separado do perfil unitário.
 
 ### Integration GPU (1 job)
-| Tipo | Configuração | Timeout | Deps       | Cache HF                |
-|------|--------------|---------|------------|-------------------------|
-| self-hosted | CUDA | 60 min  | [dev,gpu]  | hf-models-gpu-cuda-py3.13 |
+| Tipo | Configuração | Timeout | Dependências | Cache |
+|------|--------------|---------|--------------|-------|
+| self-hosted | CUDA | 60 min | `[dev,gpu]` | cache pip local do runner; sem modelos |
 
-**Condicional**: Executado apenas em `push` para `main` (não em PRs nem `develop`).
+**Condicional**: Solicitado somente por `workflow_dispatch`. Em push/PR, skipped significa não executado, não aprovado.
 
-## Cache de Modelos Hugging Face
+## Cache de dependências e modelos
 
 ### Estratégia
-- **Chave primária**: `hf-models-{cpu|gpu}-{OS}-py{VERSION}` (ex: `hf-models-cpu-Linux-py3.13`)
-- **Fallback**: `hf-models-{cpu|gpu}-{OS}-`, depois `hf-models-`
-- **Caminho**: `~/.cache/huggingface` (padrão HF Hub)
-- **Modelos pré-carregados**: Nenhum. A primeira execução baixa; execuções subsequentes restauram do cache.
-
-### Modelos Utilizados em Testes
-- **NLLB**: `facebook/nllb-200-distilled-600M` (CPU-friendly, ~1.2 GB)
-- **mBART**: `facebook/mbart-large-50-many-to-many-mmt` (GPU-preferred, ~2.6 GB)
+- `setup-python` cacheia o cache global do pip; a chave considera `pyproject.toml` e os perfis.
+- Unit e CPU têm chaves distintas, evitando levar a stack CUDA aos jobs unitários.
+- O job GPU não cria um cache Actions com wheels CUDA de vários GB.
+- Os testes CI usam `HF_HUB_OFFLINE=1`; pesos de modelo não são baixados nem cacheados.
 
 ### Offline Mode
-- **Default**: `HF_HUB_OFFLINE=0` (acessa Hub se modelo não estiver em cache)
-- **Falha clara**: Se modelo não está em cache e modo offline está ativado, erro explícito
-- **CI**: Sempre online (pode fazer download inicial)
+- **CI**: `HF_HUB_OFFLINE=1`; a suíte não depende de pesos nem de acesso ao Hub.
+- **Produto**: modelos são preparados explicitamente pelo usuário.
 
 ## Marcadores de Testes (`@pytest.mark`)
 
 ### Marcadores Disponíveis
 ```python
-@pytest.mark.unit        # Testes unitários (sem PyTorch, sem rede)
-@pytest.mark.gpu         # Testes que usam CUDA/GPU
+@pytest.mark.unit        # Testes unitários isolados
+@pytest.mark.gpu         # Teste que exige GPU/CUDA real
+@pytest.mark.gui         # Teste que exige display Tk real
 ```
 
 ### Lógica de Seleção
 - **unit-tests job**: `-m unit` (apenas testes unitários)
-- **integration-cpu job**: `-m "not gpu"` (tudo exceto GPU, com PyTorch CPU)
-- **integration-gpu job**: `-m gpu` (testes GPU/CUDA)
+- **integration-cpu job**: `-m "not gpu and not unit"` e ignora apenas a versão, coberta em quality. Testes sem marcador pertencem explicitamente à integração CPU.
+- **integration-gpu job**: `-m gpu` (smoke test com módulo/tensor CUDA real, sem baixar modelo)
+- **Partição**: `python scripts/ci_reporting.py validate-selection` falha se houver sobreposição unit/GPU ou se a cobertura GPU desaparecer.
 
 ### Exemplo: Marcar um Teste
 ```python
@@ -105,8 +94,8 @@ def test_simple_validation():
     assert True
 
 @pytest.mark.gpu
-def test_mbart_translation():
-    """Teste GPU/CUDA, requer PyTorch."""
+def test_cuda_tensor_on_gpu():
+    """Teste GPU/CUDA real, requer runner com PyTorch CUDA."""
     assert True
 ```
 
@@ -132,7 +121,12 @@ python -m pytest -q -m unit
 
 **Apenas integração (CPU):**
 ```bash
-python -m pytest -q -m "not gpu" --ignore=tests/test_version_consistency.py
+python -m pytest -q -m "not gpu and not unit" --ignore=tests/test_version_consistency.py
+```
+
+**Verificar a partição do CI:**
+```bash
+python scripts/ci_reporting.py validate-selection
 ```
 
 **Apenas GPU:**
@@ -183,27 +177,25 @@ Cada job publica resultados JUnit XML em `reports/test-results/`:
 
 ### Integration GPU
 - **Falha se**: Qualquer teste falha ou não roda.
-- **Impacto**: Bloqueia push para `main` (não bloqueia PR).
+- **Solicitação**: `workflow_dispatch`; requer runner self-hosted CUDA.
+- **Interpretação**: `skipped` em push/PR significa GPU não executada, não aprovada.
 
 ### Summary
-- **Falha se**: Total de testes = 0 OU falhas > 0 OU erros > 0.
+- **Falha se**: Job obrigatório falhar/cancelar, JUnit faltar/duplicar/ser inválido, uma matriz não coletar testes ou houver falhas/erros. No dispatch, o JUnit GPU também é obrigatório.
 - **Impacto**: Falha visual no workflow (badge vermelha).
 
 ## Limitações Conhecidas
 
-### CI não Instala GPU
-- `[gpu]` stack (PyTorch/Transformers) é instalado apenas em **integration-cpu** e **integration-gpu**.
-- **unit-tests** usa apenas `[dev]`, evitando download de 2+ GB do PyTorch em cada execução.
-- Testes que exigem PyTorch são marcados `@pytest.mark.gpu` e pulados em **unit-tests**.
+### Perfis de dependências
+- **unit-tests** usa apenas `[dev]`; **integration-cpu** instala PyTorch CPU e Transformers; **integration-gpu** usa `[dev,gpu]`.
+- Testes que usam PyTorch, mas não precisam de hardware GPU, permanecem no conjunto CPU.
 
-### Sem Pre-staging de Modelos
-- Modelos não são pre-carregados no repositório ou no CI.
-- Primeira execução de **integration-cpu** pode levar ~10 min (download + cache).
-- Execuções subsequentes usam cache (~1-2 min).
+### Sem downloads de modelos no CI
+- Pesos não são pre-carregados nem cacheados. `HF_HUB_OFFLINE=1` faz downloads acidentais falharem claramente.
 
-### GPU Runner Opcional
+### GPU Runner manual
 - **integration-gpu** requer runner self-hosted com CUDA.
-- Se não configurado, job é pulado (sem erro).
+- É solicitado por `workflow_dispatch`; em eventos comuns aparece skipped e não conta como aprovação.
 - Documentar em `CONTRIBUTING.md` como configurar runner.
 
 ### Sem Compilação de Wheels
@@ -215,7 +207,7 @@ Cada job publica resultados JUnit XML em `reports/test-results/`:
 ### Adicionar Novo Teste
 1. Marque com `@pytest.mark.unit` (sem PyTorch) ou `@pytest.mark.gpu` (com PyTorch).
 2. Coloque em `tests/`.
-3. Re-execute localmente: `python -m pytest -q`.
+3. Re-execute localmente: `python -m pytest -q` e `python scripts/ci_reporting.py validate-selection`.
 4. Push; workflow roda automaticamente.
 
 ### Adicionar Nova Versão Python
@@ -227,10 +219,10 @@ Cada job publica resultados JUnit XML em `reports/test-results/`:
 ### Configurar GPU Runner
 1. Instale Actions runner em máquina com CUDA.
 2. Registre como self-hosted com labels `gpu`, `cuda`.
-3. Workflow automaticamente usará `runs-on: [self-hosted, gpu, cuda]`.
+3. Solicite `workflow_dispatch`; o job não é executado automaticamente em push.
 
 ### Desabilitar GPU Job (Temporário)
-Adicione `if: false` em `integration-gpu.steps[0]` para pular sem erro.
+Mantenha a condição `workflow_dispatch` para não executar GPU em eventos comuns.
 
 ## Visualização na UI do GitHub
 

@@ -1,0 +1,6 @@
+# Optional translation stack used by CPU integration tests. PyTorch itself is
+# installed separately from its CPU wheel index on Windows/Linux.
+transformers>=4.35,<5
+huggingface-hub>=0.20.0
+sacremoses>=0.1.0
+sentencepiece>=0.2.0
