@@ -15,19 +15,28 @@ from poliglota.review_window import open_review_window
 if TYPE_CHECKING:
     from pathlib import Path
 
-_ROOT: tk.Tk | None = None
+
+@pytest.fixture(scope="module")
+def tk_root() -> Any:
+    try:
+        # Tkinter is designed around one Tk interpreter per application.
+        # Keep that root mapped so transient windows do not depend on
+        # platform-specific behavior of a withdrawn parent.
+        root = tk.Tk()
+        root.wait_visibility()
+    except tk.TclError as exc:
+        error = str(exc).lower()
+        if "no display name" in error or "couldn't connect to display" in error:
+            pytest.skip(f"Tk display is unavailable: {exc}")
+        raise
+    yield root
+    with suppress(tk.TclError):
+        root.destroy()
 
 
 @pytest.fixture
-def review_ui(tmp_path: Path) -> Any:
-    global _ROOT
-    try:
-        if _ROOT is None:
-            _ROOT = tk.Tk()
-            _ROOT.withdraw()
-        root = _ROOT
-    except tk.TclError as exc:
-        pytest.skip(f"Tk display is unavailable: {exc}")
+def review_ui(tmp_path: Path, tk_root: tk.Tk) -> Any:
+    root = tk_root
     project = tmp_path / "review project"
     project.mkdir()
     (project / "app_home_en_US.arb").write_text(
@@ -51,6 +60,15 @@ def review_ui(tmp_path: Path) -> Any:
     buttons = {
         widget.cget("text"): widget for widget in _walk(window) if isinstance(widget, ttk.Button)
     }
+    # Tk's own docs describe wait_visibility() as the way to wait until a
+    # newly created window is visible before acting on it.  The tree's class
+    # binding and the production <<TreeviewSelect>> binding are now active on
+    # a mapped widget, without pumping the unrestricted global event queue.
+    window.wait_visibility()
+    tree.wait_visibility()
+    assert window.winfo_ismapped()
+    assert tree.winfo_ismapped()
+    assert tree.bind("<<TreeviewSelect>>")
     yield root, project, window, tree, editor, buttons
     with suppress(tk.TclError):
         window.destroy()
