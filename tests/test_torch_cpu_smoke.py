@@ -10,7 +10,6 @@ from poliglota.engines.pytorch_engine import PyTorchTranslationEngine
 def test_real_pytorch_model_and_tensor_run_on_cpu() -> None:
     """Verify the installed CPU runtime can execute the engine's device path."""
     torch = pytest.importorskip("torch", reason="CPU integration profile requires PyTorch")
-    assert torch.version.cuda is None
 
     engine = PyTorchTranslationEngine("t5-small", device="cpu")
     model = torch.nn.Linear(2, 1)

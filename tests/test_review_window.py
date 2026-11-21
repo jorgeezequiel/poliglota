@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import platform
 import tkinter as tk
 from contextlib import suppress
+from time import monotonic
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any
 
@@ -18,20 +20,83 @@ if TYPE_CHECKING:
 
 @pytest.fixture(scope="module")
 def tk_root() -> Any:
+    root: tk.Tk | None = None
     try:
-        # Tkinter is designed around one Tk interpreter per application.
-        # Keep that root mapped so transient windows do not depend on
-        # platform-specific behavior of a withdrawn parent.
+        # Tkinter uses one Tcl interpreter per application.  Do not use
+        # wait_visibility here: it waits for a *change* in visibility, so it
+        # can wait forever if the window is already visible or Aqua does not
+        # deliver the expected transition.
         root = tk.Tk()
-        root.wait_visibility()
+        print(
+            "Tk root initialized: "
+            f"system={platform.platform()} python={platform.python_version()} "
+            f"tcl={root.tk.call('info', 'patchlevel')} "
+            f"windowing_system={root.tk.call('tk', 'windowingsystem')} "
+            f"state={root.state()} mapped={root.winfo_ismapped()} "
+            f"viewable={root.winfo_viewable()}"
+        )
+        root.deiconify()
+        _wait_until_viewable(root, root)
+        print(
+            "Tk root mapped: "
+            f"state={root.state()} mapped={root.winfo_ismapped()} "
+            f"viewable={root.winfo_viewable()}"
+        )
     except tk.TclError as exc:
+        if root is not None:
+            with suppress(tk.TclError):
+                root.destroy()
         error = str(exc).lower()
         if "no display name" in error or "couldn't connect to display" in error:
             pytest.skip(f"Tk display is unavailable: {exc}")
         raise
+    except BaseException:
+        if root is not None:
+            with suppress(tk.TclError):
+                root.destroy()
+        raise
+    assert root is not None
     yield root
     with suppress(tk.TclError):
         root.destroy()
+
+
+def _wait_until_viewable(root: tk.Tk, widget: tk.Misc, timeout_ms: int = 5000) -> None:
+    """Pump Tk's normal main loop until mapped, with a bounded diagnostic exit."""
+    if widget.winfo_exists() and widget.winfo_viewable():
+        return
+
+    deadline = monotonic() + timeout_ms / 1000
+    viewable = False
+
+    def inspect_mapping() -> None:
+        nonlocal viewable
+        if widget.winfo_exists() and widget.winfo_viewable():
+            viewable = True
+            root.quit()
+        elif monotonic() >= deadline:
+            root.quit()
+        else:
+            root.after(25, inspect_mapping)
+
+    root.after(0, inspect_mapping)
+    root.mainloop()
+    if not viewable:
+        details = {
+            "system": platform.platform(),
+            "python": platform.python_version(),
+            "tcl": root.tk.call("info", "patchlevel"),
+            "windowing_system": root.tk.call("tk", "windowingsystem"),
+            "root_state": root.state(),
+            "root_mapped": root.winfo_ismapped(),
+            "widget": str(widget),
+            "widget_mapped": widget.winfo_ismapped(),
+            "widget_viewable": widget.winfo_viewable(),
+            "timeout_ms": timeout_ms,
+        }
+        print(f"Tk mapping diagnostic: {details}")
+        message = "Tk widget did not become viewable"
+        raise AssertionError(message)
 
 
 @pytest.fixture
@@ -60,14 +125,12 @@ def review_ui(tmp_path: Path, tk_root: tk.Tk) -> Any:
     buttons = {
         widget.cget("text"): widget for widget in _walk(window) if isinstance(widget, ttk.Button)
     }
-    # Tk's own docs describe wait_visibility() as the way to wait until a
-    # newly created window is visible before acting on it.  The tree's class
-    # binding and the production <<TreeviewSelect>> binding are now active on
-    # a mapped widget, without pumping the unrestricted global event queue.
-    window.wait_visibility()
-    tree.wait_visibility()
-    assert window.winfo_ismapped()
-    assert tree.winfo_ismapped()
+    # Use a bounded main-loop pass instead of wait_visibility's unbounded
+    # wait-for-transition.  Then send the event through Tk's real binding.
+    window.deiconify()
+    _wait_until_viewable(root, tree)
+    assert window.winfo_viewable()
+    assert tree.winfo_viewable()
     assert tree.bind("<<TreeviewSelect>>")
     yield root, project, window, tree, editor, buttons
     with suppress(tk.TclError):
